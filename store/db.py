@@ -55,3 +55,36 @@ def upsert_earnings(ticker: str, quarter: str, date: str, eps: float = None,
     conn.commit()
     cur.close()
     conn.close()
+
+def semantic_search(query_embedding: list[float], tickers: list[str], top_k: int = 5) -> list[dict]:
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT id, content, ticker, date, source, doc_type, section, title,
+               1 - (embedding <=> %s::vector) AS similarity
+        FROM documents
+        WHERE ticker = ANY(%s)
+        ORDER BY embedding <=> %s::vector
+        LIMIT %s
+    """, (query_embedding, tickers, query_embedding, top_k))
+    columns = [desc[0] for desc in cur.description]
+    results = [dict(zip(columns, row)) for row in cur.fetchall()]
+    cur.close()
+    conn.close()
+    return results
+
+def get_earnings(ticker: str, limit: int = 4) -> list[dict]:
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT ticker, quarter, date, eps, revenue, net_income, guidance
+        FROM earnings
+        WHERE ticker = %s
+        ORDER BY date DESC
+        LIMIT %s
+    """, (ticker, limit))
+    columns = [desc[0] for desc in cur.description]
+    results = [dict(zip(columns, row)) for row in cur.fetchall()]
+    cur.close()
+    conn.close()
+    return results
