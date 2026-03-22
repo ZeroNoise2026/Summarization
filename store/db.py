@@ -3,6 +3,7 @@ import psycopg2
 from psycopg2.extras import execute_values
 import numpy as np
 import os
+from typing import Optional
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -83,6 +84,81 @@ def get_earnings(ticker: str, limit: int = 4) -> list[dict]:
         ORDER BY date DESC
         LIMIT %s
     """, (ticker, limit))
+    columns = [desc[0] for desc in cur.description]
+    results = [dict(zip(columns, row)) for row in cur.fetchall()]
+    cur.close()
+    conn.close()
+    return results
+
+
+def get_documents_by_ticker(
+    ticker: str,
+    doc_type: Optional[str] = None,
+    limit: int = 200,
+) -> list[dict]:
+    """Fetch documents for a ticker, ordered by date DESC.
+    Skips the embedding column to keep memory usage low.
+    """
+    conn = get_conn()
+    cur = conn.cursor()
+    if doc_type:
+        cur.execute("""
+            SELECT id, content, ticker, date, source, doc_type, section, title
+            FROM documents
+            WHERE ticker = %s AND doc_type = %s
+            ORDER BY date DESC
+            LIMIT %s
+        """, (ticker, doc_type, limit))
+    else:
+        cur.execute("""
+            SELECT id, content, ticker, date, source, doc_type, section, title
+            FROM documents
+            WHERE ticker = %s
+            ORDER BY date DESC
+            LIMIT %s
+        """, (ticker, limit))
+    columns = [desc[0] for desc in cur.description]
+    results = [dict(zip(columns, row)) for row in cur.fetchall()]
+    cur.close()
+    conn.close()
+    return results
+
+
+def get_price_snapshots(ticker: str, limit: int = 30) -> list[dict]:
+    """Fetch recent price snapshots for a ticker, ordered by date DESC."""
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT ticker, date, close_price, pe_ratio, market_cap
+        FROM price_snapshot
+        WHERE ticker = %s
+        ORDER BY date DESC
+        LIMIT %s
+    """, (ticker, limit))
+    columns = [desc[0] for desc in cur.description]
+    results = [dict(zip(columns, row)) for row in cur.fetchall()]
+    cur.close()
+    conn.close()
+    return results
+
+
+def get_tracked_tickers(active_only: bool = True) -> list[dict]:
+    """Fetch tracked tickers from Supabase."""
+    conn = get_conn()
+    cur = conn.cursor()
+    if active_only:
+        cur.execute("""
+            SELECT ticker, ticker_type
+            FROM tracked_tickers
+            WHERE is_active = TRUE
+            ORDER BY ticker
+        """)
+    else:
+        cur.execute("""
+            SELECT ticker, ticker_type
+            FROM tracked_tickers
+            ORDER BY ticker
+        """)
     columns = [desc[0] for desc in cur.description]
     results = [dict(zip(columns, row)) for row in cur.fetchall()]
     cur.close()
