@@ -1,98 +1,112 @@
-# VectorDB Storage
+# Summarization Service
 
-This repository provides a python utility for storing and managing unstructured text documents along with their vector embeddings, as well as structured financial earnings data, within a PostgreSQL database (like Supabase configured with `pgvector`).
+Generates comprehensive investment analysis reports by extracting financial data from Supabase and feeding it to the Moonshot (Kimi) API.
 
-## Features
-- **Document & Embedding Storage**: Store text data (e.g., news, SEC filings) coupled with high-dimensional embedding vectors using `pgvector`.
-- **Earnings Data Storage**: Keep track of quarterly financial reports, revenue, EPS (Earnings Per Share), and net income guidance.
-- **Upsert Functionality**: Handles duplicate records gracefully by updating existing entries on conflict.
+## Architecture
+
+```
+Supabase (documents, earnings, price_snapshot)
+    │
+    ▼
+fetcher.py  ──  Extract & organize data per ticker
+    │
+    ▼
+prompts.py  ──  Build structured prompts
+    │
+    ▼
+summarizer.py  ──  Call Moonshot API (OpenAI-compatible)
+    │
+    ▼
+output/{TICKER}_{DATE}.md  ──  Markdown analysis reports
+```
+
+## Prerequisites
+
+- Python 3.10+
+- A Supabase project with `pgvector` enabled and populated tables (`documents`, `earnings`, `price_snapshot`, `tracked_tickers`). See `data-pipeline/pipeline/schema.sql` for the DDL.
+- A Moonshot API key from [platform.moonshot.cn](https://platform.moonshot.cn)
 
 ## Installation
 
-Install the required dependencies using `pip`:
-
 ```bash
+cd Summarization
 pip install -r requirements.txt
 ```
 
 ## Configuration
 
-This project requires a connection string to a PostgreSQL database (e.g., Supabase) with the `pgvector` extension enabled. 
+Copy the example env file and fill in your credentials:
 
-Create a `.env` file in the root directory and add your connection URL:
-
-```env
-SUPABASE_DB_URL="postgresql://user:password@host:port/dbname"
+```bash
+cp .env.example .env
 ```
+
+Required variables:
+
+| Variable | Description |
+|---|---|
+| `SUPABASE_DB_URL` | PostgreSQL connection string for Supabase |
+| `MOONSHOT_API_KEY` | Moonshot (Kimi) API key |
+
+Optional variables:
+
+| Variable | Default | Description |
+|---|---|---|
+| `MOONSHOT_MODEL` | `moonshot-v1-128k` | Model to use (128k context recommended) |
+| `MOONSHOT_BASE_URL` | `https://api.moonshot.cn/v1` | API endpoint |
+| `MAX_CONTEXT_CHARS` | `380000` | Max chars for prompt context |
 
 ## Usage
 
-### Storing Documents and Embeddings
+```bash
+# Single ticker
+python run.py --ticker AAPL
 
-You can use the `upsert_documents` function in `store/db.py` to save documents alongside their vector representations. 
+# Multiple tickers
+python run.py --ticker AAPL,MSFT,NVDA
 
-Example (`test-script/testScriptForVector.py`):
-```python
-import numpy as np
-from store.db import upsert_documents
+# All active tickers from Supabase
+python run.py --all
 
-fake_doc = {
-    "id": "test_001",
-    "content": "Apple reports record Q1 earnings",
-    "ticker": "AAPL",
-    "date": "2026-03-15",
-    "source": "finnhub",
-    "doc_type": "news",
-    "section": None,
-    "title": "Apple Q1 Earnings"
-}
-
-# Generate a 384-dimensional fake embedding vector
-fake_embedding = np.random.rand(1, 384).astype(np.float32)
-
-# Insert or update the document
-count = upsert_documents([fake_doc], fake_embedding)
-print(f"Inserted: {count} document(s)")
+# Dry run — fetch data only, skip API call (useful for testing)
+python run.py --ticker AAPL --dry-run
 ```
 
-### Storing Earnings Data
+Reports are saved to `output/{TICKER}_{YYYY-MM-DD}.md`.
 
-You can use `upsert_earnings` to save structured financial data:
+## Project Structure
 
-```python
-from store.db import upsert_earnings
-
-upsert_earnings(
-    ticker="AAPL",
-    quarter="Q1 2026",
-    date="2026-03-15",
-    eps=1.20,
-    revenue=120000000000,
-    net_income=30000000000,
-    guidance="Strong growth expected in Q2."
-)
+```
+Summarization/
+├── run.py              # CLI entry point and orchestration
+├── config.py           # Environment-driven configuration
+├── fetcher.py          # Data extraction from Supabase + context assembly
+├── prompts.py          # System and user prompt templates
+├── summarizer.py       # Moonshot API client with retry logic
+├── store/
+│   ├── __init__.py
+│   └── db.py           # PostgreSQL/Supabase data access layer
+├── output/             # Generated reports (gitignored)
+├── test-script/
+│   └── testScriptForVector.py
+├── requirements.txt
+├── .env.example
+└── .gitignore
 ```
 
-## Database Schema Dependencies
+## Data Flow
 
-To use this code out of the box, the following minimum PostgreSQL table structures are required.
+1. **Fetch** — `fetcher.py` queries Supabase for documents (news, 10-K, 10-Q, earnings), structured earnings rows, and price snapshots for a given ticker.
+2. **Format** — Raw data is organized by type and formatted into readable text blocks. If total context exceeds the token budget, older news and filings are truncated.
+3. **Prompt** — `prompts.py` assembles a system prompt (analyst role + report structure) and a user prompt (all formatted data).
+4. **Generate** — `summarizer.py` sends the prompt to the Moonshot API with automatic retry on rate limits and connection errors.
+5. **Save** — The generated report is written as a Markdown file to `output/`.
 
-**`documents`** table:
-- `id` (Primary Key)
-- `content` (Text)
-- `embedding` (Vector type)
-- `ticker` (String)
-- `date` (Date/String)
-- `source` (String)
-- `doc_type` (String)
-- `section` (String, Optional)
-- `title` (String, Optional)
+## Database Tables Used
 
-**`earnings`** table:
-- `ticker` (Component of Primary Key)
-- `quarter` (Component of Primary Key)
-- `date` (Date/String)
-- `eps` (Float)
-- `revenue` (BigInt)
-- `net_income` (BigInt)
-- `guidance` (Text, Optional)
+| Table | Data Pulled |
+|---|---|
+| `documents` | News articles, SEC filings (10-K/10-Q), earnings text chunks |
+| `earnings` | Quarterly EPS, revenue, net income, guidance |
+| `price_snapshot` | Daily close price, P/E ratio, market cap |
+| `tracked_tickers` | Active ticker list (used with `--all` flag) |
