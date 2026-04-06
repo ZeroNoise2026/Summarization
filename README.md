@@ -52,7 +52,7 @@ Optional variables:
 
 | Variable | Default | Description |
 |---|---|---|
-| `MOONSHOT_MODEL` | `moonshot-v1-128k` | Model to use (128k context recommended) |
+| `MOONSHOT_MODEL` | `kimi-k2.5` | Model to use (128k+ context recommended) |
 | `MOONSHOT_BASE_URL` | `https://api.moonshot.cn/v1` | API endpoint |
 | `MAX_CONTEXT_CHARS` | `380000` | Max chars for prompt context |
 

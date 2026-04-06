@@ -11,7 +11,7 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 # Moonshot (Kimi) API
 MOONSHOT_API_KEY = os.getenv("MOONSHOT_API_KEY")
 MOONSHOT_BASE_URL = os.getenv("MOONSHOT_BASE_URL", "https://api.moonshot.ai/v1")
-MOONSHOT_MODEL = os.getenv("MOONSHOT_MODEL", "moonshot-v1-128k")
+MOONSHOT_MODEL = os.getenv("MOONSHOT_MODEL", "kimi-k2.5")
 
 # Token budget: reserve ~4k for system + prompt framing, rest for context
 MAX_CONTEXT_CHARS = int(os.getenv("MAX_CONTEXT_CHARS", "380000"))
