@@ -5,7 +5,7 @@ Shared KIMI (Moonshot) LLM client — singleton + retry logic.
 Used by:
   - summary/summarizer.py  (report generation, kimi-k2.5, temp=1.0)
   - question/generator.py  (QA generation, kimi-k2.5, temp=1.0)
-  - question/router.py     (L2 classification, kimi-k2.5, temp=1.0, max_tokens=200)
+  - question/router.py     (L2 classification, moonshot-v1-8k, temp=0, max_tokens=150)
 
 Note: kimi-k2.5 is a reasoning model — only accepts temperature=1.
 """
@@ -144,8 +144,12 @@ def chat_stream(
     temperature: float = 0.3,
     max_tokens: Optional[int] = None,
     max_retries: int = 3,
-) -> Generator[str, None, None]:
-    """Send a streaming chat completion request — yields content tokens.
+) -> Generator[tuple, None, None]:
+    """Send a streaming chat completion request — yields (type, text) tuples.
+
+    Tuple types:
+      ("thinking", text) — reasoning tokens (kimi-k2.5 reasoning_content)
+      ("token", text)    — final answer content tokens
 
     Retries on RateLimitError (429) up to max_retries times.
     """
@@ -170,8 +174,15 @@ def chat_stream(
 
             t0 = time.time()
             for chunk in response:
-                if chunk.choices and chunk.choices[0].delta.content:
-                    yield chunk.choices[0].delta.content
+                if chunk.choices and chunk.choices[0].delta:
+                    delta = chunk.choices[0].delta
+                    # kimi-k2.5: reasoning_content chunks arrive first, then content
+                    reasoning = getattr(delta, 'reasoning_content', None) or ''
+                    content = delta.content or ''
+                    if reasoning:
+                        yield ("thinking", reasoning)
+                    if content:
+                        yield ("token", content)
 
             latency = int((time.time() - t0) * 1000)
             from audit import log_api_call
@@ -196,7 +207,7 @@ def chat_stream(
             if attempt == max_retries:
                 # Yield error token instead of raising — avoids async/sync
                 # generator exception propagation issues with ASGI.
-                yield "[Error: The AI model is rate-limited (Tier 0: RPM=3, concurrent=1). Please wait 20-30 seconds and try again.]"
+                yield ("token", "[Error: The AI model is rate-limited (Tier 0: RPM=3, concurrent=1). Please wait 20-30 seconds and try again.]")
                 return
             time.sleep(wait)
 
@@ -204,6 +215,6 @@ def chat_stream(
             wait = 2 ** attempt * 5
             logger.warning(f"Stream connection issue (attempt {attempt}/{max_retries}), retrying in {wait}s: {e}")
             if attempt == max_retries:
-                yield "[Error: Connection to AI model failed after retries. Please try again.]"
+                yield ("token", "[Error: Connection to AI model failed after retries. Please try again.]")
                 return
             time.sleep(wait)

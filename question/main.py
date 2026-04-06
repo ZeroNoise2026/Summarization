@@ -39,15 +39,17 @@ async def ask_stream(req: AskRequest):
         has_tokens = False
         keepalive_counter = 0
         try:
-            async for token in handle_ask_stream(req):
-                if token is None:
+            async for item in handle_ask_stream(req):
+                if item is None:
                     # Queue poll tick — send keepalive every ~2s (20 ticks * 0.1s)
                     keepalive_counter += 1
                     if keepalive_counter % 20 == 0:
                         yield ": keepalive\n\n"
                 else:
-                    has_tokens = True
-                    yield f"data: {json.dumps(token)}\n\n"
+                    event_type, text = item
+                    if event_type == "token":
+                        has_tokens = True
+                    yield f"data: {json.dumps({'type': event_type, 'text': text})}\n\n"
         except Exception as e:
             logger.error(f"Stream generation error: {type(e).__name__}: {e}")
             yield f"data: [Error: The AI model is temporarily unavailable ({type(e).__name__}). Please wait and try again.]\n\n"

@@ -55,6 +55,27 @@ async def fetch_live_quote(ticker: str) -> str:
         return ""
 
 
+async def fetch_live_quote_raw(ticker: str) -> dict:
+    """Fetch live quote from data-pipeline — returns raw dict for fast path.
+
+    Returns full FMP quote dict (price, changePercentage, marketCap,
+    dayHigh, dayLow, yearHigh, yearLow, volume, priceAvg50, priceAvg200,
+    name, etc.) or empty dict on failure.
+    Note: FMP quote does NOT include 'pe' field.
+    """
+    client = get_pipeline_client()
+    try:
+        resp = await client.get(f"/api/fmp/quote/{ticker}")
+        resp.raise_for_status()
+        data = resp.json()
+        if not data:
+            return {}
+        return data[0] if isinstance(data, list) else data
+    except Exception as e:
+        logger.warning(f"Failed to fetch live quote for {ticker}: {e}")
+        return {}
+
+
 async def fetch_live_earnings(ticker: str) -> str:
     """Fetch recent earnings from data-pipeline."""
     client = get_pipeline_client()

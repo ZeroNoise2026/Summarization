@@ -24,6 +24,23 @@ COMPANY_ALIASES: dict[str, str] = {
     "Alphabet": "GOOGL", "Meta": "META", "Facebook": "META",
     "Microsoft": "MSFT", "Nvidia": "NVDA", "Tesla": "TSLA",
     "S&P": "SPY", "Nasdaq": "QQQ",
+    # Commonly referenced by description, not ticker
+    "ON Semiconductor": "ON", "ServiceNow": "NOW", "Allstate": "ALL",
+    "Ford": "F", "Visa": "V", "AT&T": "T", "US Steel": "X",
+    "Alibaba": "BABA", "JPMorgan": "JPM", "Goldman": "GS",
+    "iPhone maker": "AAPL", "search giant": "GOOGL",
+    # Cloud providers — implicit ticker mapping
+    "AWS": "AMZN", "Azure": "MSFT", "GCP": "GOOGL",
+}
+
+# Phrases that map to multiple tickers (one-to-many)
+PHRASE_TO_TICKERS: dict[str, list[str]] = {
+    "cloud provider": ["AMZN", "MSFT", "GOOGL"],
+    "cloud computing": ["AMZN", "MSFT", "GOOGL"],
+    "big tech": ["AAPL", "AMZN", "GOOGL", "META", "MSFT"],
+    "magnificent seven": ["AAPL", "AMZN", "GOOGL", "META", "MSFT", "NVDA", "TSLA"],
+    "mag 7": ["AAPL", "AMZN", "GOOGL", "META", "MSFT", "NVDA", "TSLA"],
+    "faang": ["META", "AAPL", "AMZN", "NVDA", "GOOGL"],
 }
 
 # ═══════════════════════════════════════════
@@ -51,6 +68,11 @@ INTENT_KEYWORDS: dict[Intent, list[str]] = {
     Intent.COMPARISON: [
         "compare", "versus", "vs", "better", "difference",
         "which one", "head to head",
+    ],
+    Intent.GENERAL_ANALYSIS: [
+        "overview", "general", "how is", "how are",
+        "tell me about", "what about", "outlook",
+        "doing financially", "update on", "analysis of",
     ],
 }
 
@@ -101,7 +123,7 @@ COMMON_WORDS = {
     "BEEN", "HAVE", "JUST", "MORE", "ALSO", "THAN",
     # Finance terms (not tickers)
     "BUY", "SELL", "HOLD", "EPS", "CEO", "CFO",
-    "ETF", "GDP", "API", "USA",
+    "ETF", "GDP", "API", "USA", "IPO", "FAANG",
 }
 
 
@@ -161,7 +183,7 @@ class QueryRouter:
         Cost: ~150 tokens total (system+examples+query+response), ~500ms.
         """
         from shared.llm import chat, has_api_key
-        from config import KIMI_MODEL_QA
+        from config import KIMI_MODEL_CLASSIFY
 
         if not has_api_key():
             logger.warning("MOONSHOT_API_KEY not set — L2 KIMI fallback disabled")
@@ -176,11 +198,11 @@ class QueryRouter:
         try:
             raw, usage = chat(
                 messages=messages,
-                model=KIMI_MODEL_QA,
+                model=KIMI_MODEL_CLASSIFY,
                 temperature=0,       # deterministic classification
-                max_tokens=200,      # kimi-k2.5 (temp=1) can be chattier, need headroom
+                max_tokens=150,      # moonshot-v1-8k: concise JSON, no reasoning overhead
                 max_retries=1,       # don't retry — keep router fast
-                timeout=10.0,        # kimi-k2.5 needs a bit more time
+                timeout=8.0,         # moonshot-v1-8k is faster (~1s), 8s generous timeout
             )
             raw = raw.strip()
             logger.info(
@@ -273,9 +295,9 @@ class QueryRouter:
         for match in regex_matches:
             if match in COMMON_WORDS:
                 continue
-            # Single-letter: only accept known tickers in short queries
+            # Single-letter: only accept known tickers in reasonably short queries
             if len(match) == 1:
-                if match in SINGLE_LETTER_TICKERS and len(query.split()) <= 6:
+                if match in SINGLE_LETTER_TICKERS and len(query.split()) <= 12:
                     tickers.add(match)
                 continue
             tickers.add(match)
@@ -286,6 +308,11 @@ class QueryRouter:
             if alias.lower() in query_lower:
                 tickers.add(ticker)
 
+        # Source 4: phrase-to-tickers (one phrase -> multiple tickers)
+        for phrase, phrase_tickers in PHRASE_TO_TICKERS.items():
+            if phrase in query_lower:
+                tickers.update(phrase_tickers)
+
         return list(tickers)
 
     def _detect_intent(self, query: str) -> tuple[Intent, int]:
@@ -294,13 +321,25 @@ class QueryRouter:
         Returns (intent, score). score=0 means L1 completely missed.
         Uses priority tie-breaking: when two intents have the same score,
         the more specific intent (higher priority) wins.
+        
+        Short keywords (<=3 chars, e.g. "PE", "EPS", "vs") use word-boundary
+        matching to avoid false substring hits (e.g. "happened" matching "PE").
         """
         query_lower = query.lower()
         best_intent = Intent.GENERAL_ANALYSIS
         best_score = 0
         best_priority = 0
         for intent, keywords in INTENT_KEYWORDS.items():
-            score = sum(1 for kw in keywords if kw.lower() in query_lower)
+            score = 0
+            for kw in keywords:
+                kw_lower = kw.lower()
+                if len(kw) <= 3:
+                    # Short keywords: require word boundary to avoid false substring matches
+                    if re.search(r'\b' + re.escape(kw_lower) + r'\b', query_lower):
+                        score += 1
+                else:
+                    if kw_lower in query_lower:
+                        score += 1
             priority = INTENT_PRIORITY.get(intent, 0)
             if score > best_score or (score == best_score and score > 0 and priority > best_priority):
                 best_score = score

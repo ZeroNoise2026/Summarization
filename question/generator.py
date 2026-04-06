@@ -18,8 +18,8 @@ def generate_answer_stream(
     query: str,
     context: str,
     data_freshness: str = "",
-) -> Generator[str, None, None]:
-    """Generate answer in streaming mode — yields tokens for SSE."""
+) -> Generator[tuple, None, None]:
+    """Generate answer in streaming mode — yields (type, text) tuples for SSE."""
     user_prompt = build_qa_prompt(query, context, data_freshness)
 
     messages = [

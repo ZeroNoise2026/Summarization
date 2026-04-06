@@ -42,6 +42,7 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 # 4. Question-service LLM settings
 # ═══════════════════════════════════════════
 KIMI_MODEL_QA: str = os.getenv("KIMI_MODEL_QA", "kimi-k2.5")
+KIMI_MODEL_CLASSIFY: str = os.getenv("KIMI_MODEL_CLASSIFY", "moonshot-v1-8k")
 LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.3"))
 LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "4096"))
 
