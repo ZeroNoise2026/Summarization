@@ -1,12 +1,12 @@
 """
-run.py
+summary/run.py
 Main entry point for the Summarization service.
 
 Usage:
-    python run.py --ticker AAPL              # single ticker
-    python run.py --ticker AAPL,MSFT,NVDA    # multiple tickers
-    python run.py --all                      # all active tickers from Supabase
-    python run.py --ticker AAPL --dry-run    # fetch data only, skip API call
+    python -m summary.run --ticker AAPL
+    python -m summary.run --ticker AAPL,MSFT,NVDA
+    python -m summary.run --all
+    python -m summary.run --ticker AAPL --dry-run
 """
 
 import argparse
@@ -16,9 +16,9 @@ from datetime import date
 from pathlib import Path
 
 from config import OUTPUT_DIR
-from fetcher import fetch_context
-from summarizer import generate_summary
-from store.db import get_tracked_tickers
+from summary.fetcher import fetch_context
+from summary.summarizer import generate_summary
+from shared.db import get_tracked_tickers
 
 logging.basicConfig(
     level=logging.INFO,
@@ -88,7 +88,8 @@ def main():
             results["failed"].append(ticker)
 
     logger.info("=" * 50)
-    logger.info(f"Done. Success: {results['success']}, Failed: {results['failed']}")
+    s, f = results["success"], results["failed"]
+    logger.info(f"Done. Success: {s}, Failed: {f}")
 
     if results["failed"]:
         sys.exit(1)
