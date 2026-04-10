@@ -14,6 +14,7 @@ from shared.db import (
 )
 from shared.formatters import (
     format_news,
+    format_regulatory,
     format_filings,
     format_earnings,
     format_prices,
@@ -27,6 +28,7 @@ logger = logging.getLogger(__name__)
 class TickerContext:
     ticker: str
     news_text: str = ""
+    regulatory_text: str = ""
     filings_text: str = ""
     earnings_text: str = ""
     price_text: str = ""
@@ -34,14 +36,19 @@ class TickerContext:
 
     @property
     def total_chars(self) -> int:
-        return len(self.news_text) + len(self.filings_text) + len(self.earnings_text) + len(self.price_text)
+        return (
+            len(self.news_text) + len(self.regulatory_text)
+            + len(self.filings_text) + len(self.earnings_text) + len(self.price_text)
+        )
 
 
 def _truncate_to_budget(ctx: TickerContext, budget: int) -> TickerContext:
-    """If total context exceeds budget, trim news first, then filings."""
+    """If total context exceeds budget, trim news first, then filings.
+    Regulatory, earnings, and price data are treated as high-priority (trimmed last).
+    """
     if ctx.total_chars <= budget:
         return ctx
-    fixed = len(ctx.earnings_text) + len(ctx.price_text)
+    fixed = len(ctx.earnings_text) + len(ctx.price_text) + len(ctx.regulatory_text)
     remaining = budget - fixed
     filings_budget = min(len(ctx.filings_text), remaining // 2)
     news_budget = remaining - filings_budget
@@ -56,6 +63,7 @@ def fetch_context(ticker: str) -> TickerContext:
     """Fetch all relevant data from Supabase and assemble into TickerContext."""
     logger.info(f"Fetching data for {ticker}...")
     news_docs = get_documents_by_ticker(ticker, doc_type="news", limit=100)
+    regulatory_docs = get_documents_by_ticker(ticker, doc_type="regulatory", limit=30)
     filing_docs = (
         get_documents_by_ticker(ticker, doc_type="10-K", limit=50)
         + get_documents_by_ticker(ticker, doc_type="10-Q", limit=50)
@@ -67,11 +75,13 @@ def fetch_context(ticker: str) -> TickerContext:
     ctx = TickerContext(
         ticker=ticker,
         news_text=format_news(news_docs),
+        regulatory_text=format_regulatory(regulatory_docs),
         filings_text=format_filings(all_filing_docs),
         earnings_text=format_earnings(earnings_rows),
         price_text=format_prices(price_rows),
         doc_counts={
             "news": len(news_docs),
+            "regulatory": len(regulatory_docs),
             "filings": len(filing_docs),
             "earnings_docs": len(earnings_docs),
             "earnings_rows": len(earnings_rows),

@@ -19,6 +19,23 @@ def format_news(docs: list[dict]) -> str:
     return "\n\n---\n\n".join(lines)
 
 
+def format_regulatory(docs: list[dict]) -> str:
+    """Format regulatory / compliance news documents into human-readable text."""
+    if not docs:
+        return ""
+    lines = []
+    for d in docs:
+        date = d.get("date", "N/A")
+        title = d.get("title") or ""
+        source = d.get("source", "")
+        content = d.get("content", "")
+        header = f"[{date}] {title}".strip() if title else f"[{date}]"
+        if source:
+            header += f" (via {source})"
+        lines.append(f"{header}\n{content}")
+    return "\n\n---\n\n".join(lines)
+
+
 def format_filings(docs: list[dict]) -> str:
     """Format SEC filings (10-K/10-Q) documents into human-readable text."""
     if not docs:
