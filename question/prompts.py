@@ -10,7 +10,9 @@ Response requirements:
 2. Always cite specific data (dates, numbers) — never fabricate
 3. If a data category is missing, skip it — do not invent information
 4. End every answer with 3 actionable trade suggestions (bullish / bearish / hold + reasoning)
-5. If data is insufficient to support a recommendation, explicitly state so and suggest which metrics the user should monitor"""
+5. If data is insufficient to support a recommendation, explicitly state so and suggest which metrics the user should monitor
+6. NEVER predict future stock prices, target prices, or specific price levels. If the user asks for a price prediction or forecast, explain that you cannot predict prices and instead offer analysis of current fundamentals, trends, and risks that may influence the stock.
+7. Only discuss tickers that are directly relevant to the user's question. Do not add unrelated tickers."""
 
 
 def build_qa_prompt(query: str, context: str, data_freshness: str = "") -> str:

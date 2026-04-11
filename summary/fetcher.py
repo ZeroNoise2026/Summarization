@@ -62,7 +62,7 @@ def _truncate_to_budget(ctx: TickerContext, budget: int) -> TickerContext:
 def fetch_context(ticker: str) -> TickerContext:
     """Fetch all relevant data from Supabase and assemble into TickerContext."""
     logger.info(f"Fetching data for {ticker}...")
-    news_docs = get_documents_by_ticker(ticker, doc_type="news", limit=100)
+    news_docs = get_documents_by_ticker(ticker, doc_type="news", limit=30)
     regulatory_docs = get_documents_by_ticker(ticker, doc_type="regulatory", limit=30)
     filing_docs = (
         get_documents_by_ticker(ticker, doc_type="10-K", limit=50)

@@ -169,8 +169,12 @@ class QueryRouter:
 
             if l2_intent is not None and score == 0:
                 intent = l2_intent
+            # Only use L2 tickers if L1 found none — never let L2 inject
+            # extra tickers when L1 already identified the relevant ones.
             if l2_tickers and len(tickers) == 0:
                 tickers = l2_tickers
+            elif l2_tickers and len(tickers) > 0:
+                logger.info(f"L2 returned extra tickers {l2_tickers}, keeping L1 tickers {tickers}")
 
         mode = INTENT_TO_MODE.get(intent, QueryMode.HYBRID)
         return RouterResult(tickers=sorted(tickers), intent=intent, mode=mode)
