@@ -7,8 +7,8 @@ Delegates to shared.llm for client management and retry logic.
 import logging
 from typing import Generator
 
-from shared.llm import chat_stream
-from config import KIMI_MODEL_QA, LLM_TEMPERATURE, LLM_MAX_TOKENS
+from shared.llm import chat_stream, pick_model
+from config import LLM_TEMPERATURE, LLM_MAX_TOKENS
 from question.prompts import SYSTEM_PROMPT, build_qa_prompt
 
 logger = logging.getLogger(__name__)
@@ -21,6 +21,10 @@ def generate_answer_stream(
 ) -> Generator[tuple, None, None]:
     """Generate answer in streaming mode — yields (type, text) tuples for SSE."""
     user_prompt = build_qa_prompt(query, context, data_freshness)
+    total_chars = len(SYSTEM_PROMPT) + len(user_prompt)
+    model = pick_model(total_chars)
+
+    logger.info(f"QA stream: model={model}, prompt ~{total_chars:,} chars")
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -29,7 +33,7 @@ def generate_answer_stream(
 
     yield from chat_stream(
         messages=messages,
-        model=KIMI_MODEL_QA,
+        model=model,
         temperature=LLM_TEMPERATURE,
         max_tokens=LLM_MAX_TOKENS,
     )

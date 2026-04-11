@@ -20,6 +20,24 @@ from config import MOONSHOT_API_KEY, MOONSHOT_BASE_URL
 
 logger = logging.getLogger(__name__)
 
+# ── Dynamic model selection ──────────────────────────────────────────────────
+# Ordered small → large. ~4 chars ≈ 1 token, leave 20% headroom for output.
+_MODEL_TIERS = [
+    ("moonshot-v1-8k",   8_000 * 4 * 0.8),    # ≤ ~25,600 chars
+    ("moonshot-v1-32k",  32_000 * 4 * 0.8),    # ≤ ~102,400 chars
+    ("moonshot-v1-128k", 128_000 * 4 * 0.8),   # ≤ ~409,600 chars
+    ("kimi-k2.5",        float("inf")),         # fallback, largest context
+]
+
+
+def pick_model(prompt_chars: int) -> str:
+    """Pick the smallest Moonshot model that fits the prompt length."""
+    for model, max_chars in _MODEL_TIERS:
+        if prompt_chars <= max_chars:
+            return model
+    return _MODEL_TIERS[-1][0]
+
+
 _client: Optional[OpenAI] = None
 
 
