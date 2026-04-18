@@ -1,0 +1,11 @@
+venv
+__pycache__
+*.pyc
+.env
+.env.*
+.git
+.gitignore
+.DS_Store
+audit
+output
+test-script
