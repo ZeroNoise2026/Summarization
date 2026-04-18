@@ -5,6 +5,7 @@ Main orchestrator: route -> tier check -> retrieve/fetch -> generate -> respond
 Fast paths (skip LLM, <2s):
   - price_query: direct DB lookup + live quote → formatted response
 """
+from __future__ import annotations
 
 import asyncio
 import logging
@@ -47,101 +48,146 @@ def _fmt_money(val) -> str:
 async def _fast_price_response(tickers: list[str]) -> str:
     """Build a formatted price response directly from DB + live API.
 
-    Returns a human-readable Markdown string — no LLM needed.
-    P/E is calculated from price / TTM EPS when not in the live quote.
+    Template-rendered (方案 4 Path A for PRICE_QUERY). No LLM involved — this
+    intent is already deterministic. We keep the old behaviour as fallback
+    in case the template renderer raises (which would indicate a bug, not
+    bad LLM output, but we stay safe).
     """
+    from question.schemas.price_query import TEMPLATE, build_context
+    from question.templates import render, RenderError
+
     parts: list[str] = []
-
     for ticker in tickers:
-        section: list[str] = [f"## {ticker}"]
-
-        # 1. Fetch live quote + earnings in parallel-ish
         live = await fetch_live_quote_raw(ticker)
         earnings = get_earnings(ticker, limit=4)
-
-        # 2. Calculate TTM P/E from earnings if live quote doesn't include it
-        pe = live.get("pe") if live else None
-        if pe is None and live and live.get("price") and earnings:
-            eps_vals = [e["eps"] for e in earnings if e.get("eps") is not None]
-            if eps_vals:
-                ttm_eps = sum(eps_vals[:4])
-                if ttm_eps > 0:
-                    pe = live["price"] / ttm_eps
-
-        # 3. Build price section
-        if live:
-            price = live.get("price")
-            change = live.get("changePercentage")
-            mc = live.get("marketCap")
-            day_high = live.get("dayHigh")
-            day_low = live.get("dayLow")
-            year_high = live.get("yearHigh")
-            year_low = live.get("yearLow")
-            volume = live.get("volume")
-            avg50 = live.get("priceAvg50")
-            avg200 = live.get("priceAvg200")
-            name = live.get("name", ticker)
-
-            # NOTE: Each bold line ends with two trailing spaces ("  ")
-            # so that Markdown renders them as <br> line breaks.
-            # Without this, single \n between lines is collapsed to a space.
-            section.append(f"**{name}**  ")
-            section.append(f"**Price:** ${price:,.2f}  " if price else "**Price:** N/A  ")
-            if change is not None:
-                arrow = "🟢" if change >= 0 else "🔴"
-                section.append(f"**Change:** {arrow} {change:+.2f}%  ")
-            if day_high and day_low:
-                section.append(f"**Day Range:** ${day_low:,.2f} – ${day_high:,.2f}  ")
-            if year_high and year_low:
-                section.append(f"**52W Range:** ${year_low:,.2f} – ${year_high:,.2f}  ")
-            if pe:
-                section.append(f"**P/E Ratio:** {pe:.1f}  ")
-            if mc:
-                if mc >= 1e12:
-                    section.append(f"**Market Cap:** ${mc/1e12:.2f}T  ")
-                elif mc >= 1e9:
-                    section.append(f"**Market Cap:** ${mc/1e9:.2f}B  ")
-                else:
-                    section.append(f"**Market Cap:** ${mc/1e6:.0f}M  ")
-            if volume:
-                section.append(f"**Volume:** {volume:,.0f}  ")
-            if avg50:
-                section.append(f"**50D Avg:** ${avg50:,.2f}  ")
-            if avg200:
-                section.append(f"**200D Avg:** ${avg200:,.2f}  ")
-        else:
-            # Fallback to DB snapshot
-            snapshots = get_price_snapshots(ticker, limit=1)
-            if snapshots:
-                s = snapshots[0]
-                section.append(f"**Price:** ${s['close_price']:,.2f} (as of {s['date']})  ")
-                db_pe = s.get("pe_ratio") or pe  # use calculated P/E as fallback
-                if db_pe:
-                    section.append(f"**P/E Ratio:** {db_pe:.1f}  ")
-                if s.get("market_cap"):
-                    mc = s["market_cap"]
-                    if mc >= 1e12:
-                        section.append(f"**Market Cap:** ${mc/1e12:.2f}T  ")
-                    else:
-                        section.append(f"**Market Cap:** ${mc/1e9:.2f}B  ")
-            else:
-                section.append("*No price data available.*")
-
-        # 4. Recent earnings from DB (already fetched above)
-        if earnings:
-            section.append("")
-            section.append("### Recent Earnings")
-            section.append("| Quarter | EPS | Revenue | Net Income |")
-            section.append("|---------|-----|---------|------------|")
-            for e in earnings:
-                eps = f"${e['eps']:.2f}" if e.get("eps") is not None else "N/A"
-                rev = _fmt_money(e.get("revenue")) if e.get("revenue") and e["revenue"] != 0 else "N/A"
-                ni = _fmt_money(e.get("net_income")) if e.get("net_income") else "N/A"
-                section.append(f"| {e['quarter']} | {eps} | {rev} | {ni} |")
-
-        parts.append("\n".join(section))
-
+        snapshots = get_price_snapshots(ticker, limit=1) if not live else []
+        ctx = build_context(
+            ticker=ticker, live=live, earnings=earnings, snapshots=snapshots,
+        )
+        try:
+            parts.append(render(TEMPLATE, ctx))
+        except RenderError as e:
+            logger.error(f"PRICE_QUERY template render failed for {ticker}: {e}")
+            # Minimal safe fallback
+            price = (live or {}).get("price") if live else None
+            parts.append(
+                f"## {ticker}\n**Price:** {_fmt_money(price) if price else 'N/A'}\n"
+                f"*(template error — showing minimal info)*"
+            )
     return "\n\n".join(parts)
+
+
+# ═══════════════════════════════════════════
+# Path A (方案 4): structured generation for EARNINGS / COMPARISON
+# LLM produces JSON narrative, backend renders all numbers from DB.
+# Failures raise _StructuredFallback so the orchestrator can route to Path B.
+# ═══════════════════════════════════════════
+
+class _StructuredFallback(RuntimeError):
+    """Raised when structured generation fails — caller should fallback to legacy path."""
+
+
+async def _structured_earnings_response(query: str, tickers: list[str], target_quarter: str | None = None) -> str:
+    """Path A for EARNINGS_ANALYSIS. Raises _StructuredFallback on any failure."""
+    from question.schemas import earnings_analysis as EA
+    from question.templates import render, RenderError
+    from question.kimi_structured import generate_json, StructuredGenError
+
+    parts: list[str] = []
+    for ticker in tickers:
+        earnings = get_earnings(ticker, limit=8)
+        if not earnings:
+            raise _StructuredFallback(f"no earnings rows for {ticker}")
+
+        context_summary = EA.summarize_for_llm(earnings, target_quarter=target_quarter)
+        quarter_hint = f" The user asked specifically about {target_quarter}." if target_quarter else ""
+        user_prompt = (
+            f"User question: {query}\n\n"
+            f"CONTEXT SUMMARY (verified facts for {ticker}, use qualitatively):\n"
+            f"{context_summary}\n"
+            f"{quarter_hint}\n\n"
+            "Respond with ONLY a JSON object matching the required schema."
+        )
+        t0 = time.time()
+        try:
+            llm_output, usage = generate_json(
+                system_prompt=EA.SYSTEM_PROMPT,
+                user_prompt=user_prompt,
+                schema=EA.SCHEMA,
+                few_shot=EA.FEW_SHOT,
+                intent_label=f"earnings:{ticker}",
+            )
+        except StructuredGenError as e:
+            raise _StructuredFallback(f"KIMI structured gen failed: {e}")
+
+        try:
+            ctx = EA.build_context(
+                ticker=ticker,
+                earnings=earnings,
+                llm_output=llm_output,
+                target_quarter=target_quarter,
+            )
+            md = render(EA.TEMPLATE, ctx)
+        except RenderError as e:
+            raise _StructuredFallback(f"render failed: {e}")
+
+        logger.info(
+            f"structured_gen: intent=earnings ticker={ticker} "
+            f"tokens={usage.get('total_tokens')} latency={int((time.time()-t0)*1000)}ms render_ok=True"
+        )
+        parts.append(md)
+    return "\n\n---\n\n".join(parts)
+
+
+async def _structured_comparison_response(query: str, tickers: list[str], target_quarter: str | None = None) -> str:
+    """Path A for COMPARISON. Raises _StructuredFallback on any failure."""
+    from question.schemas import comparison as CMP
+    from question.templates import render, RenderError
+    from question.kimi_structured import generate_json, StructuredGenError
+
+    per_ticker = {t: get_earnings(t, limit=8) for t in tickers}
+    missing = [t for t, r in per_ticker.items() if not r]
+    if missing:
+        raise _StructuredFallback(f"no earnings rows for {missing}")
+
+    context_summary = CMP.summarize_for_llm(tickers, per_ticker, target_quarter=target_quarter)
+    quarter_hint = f" The user asked specifically about {target_quarter}." if target_quarter else ""
+    user_prompt = (
+        f"User question: {query}\n\n"
+        f"CONTEXT SUMMARY (verified facts, use directionally):\n"
+        f"{context_summary}\n"
+        f"{quarter_hint}\n"
+        "Respond with ONLY a JSON object matching the required schema."
+    )
+    t0 = time.time()
+    try:
+        llm_output, usage = generate_json(
+            system_prompt=CMP.SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            schema=CMP.SCHEMA,
+            few_shot=CMP.FEW_SHOT,
+            intent_label=f"comparison:{','.join(tickers)}",
+            max_tokens=1500,
+        )
+    except StructuredGenError as e:
+        raise _StructuredFallback(f"KIMI structured gen failed: {e}")
+
+    try:
+        ctx = CMP.build_context(
+            tickers=tickers,
+            per_ticker_earnings=per_ticker,
+            llm_output=llm_output,
+            target_quarter=target_quarter,
+        )
+        md = render(CMP.TEMPLATE, ctx)
+    except RenderError as e:
+        raise _StructuredFallback(f"render failed: {e}")
+
+    logger.info(
+        f"structured_gen: intent=comparison tickers={tickers} "
+        f"tokens={usage.get('total_tokens')} latency={int((time.time()-t0)*1000)}ms render_ok=True"
+    )
+    return md
 
 
 async def handle_ask_stream(req: AskRequest):
@@ -150,11 +196,28 @@ async def handle_ask_stream(req: AskRequest):
     Fast path: price_query intent → direct DB/API lookup, no LLM (~1-2s)
     Normal path: all other intents → retrieve context → LLM generation (~50-90s)
     """
-    route_result = router.route(req.query, req.tickers)
+    route_result = router.route(req.query, req.tickers, req.context_tickers)
     tickers = route_result.tickers
     intent = route_result.intent
     mode = route_result.mode
     yield ("status", "🔍 Analyzing your question...")
+
+    # ── Clarification gate (方案 D) ─────────────────────────────────
+    # No ticker extracted + watchlist has multiple candidates →
+    # don't call LLM; emit chips for UI to render.
+    if route_result.needs_clarification:
+        import json as _json
+        payload = _json.dumps({
+            "question": req.query,
+            "options": route_result.clarification_options,
+        })
+        yield ("clarification", payload)
+        return
+
+    # ── Auto-bind note (方案 D, single-watchlist case) ──────────────
+    if route_result.auto_bound_ticker:
+        yield ("status", f"ℹ️ Assuming you mean ${route_result.auto_bound_ticker} (from your watchlist)…")
+
     # ── Default market tickers for ticker-less market queries ───────
     # When user asks "What happened in the market today?" with no tickers,
     # inject SPY/QQQ so we have some context to work with.
@@ -176,6 +239,32 @@ async def handle_ask_stream(req: AskRequest):
             yield ("token", line + "\n")
         return
 
+    # ── Path A (方案 4): structured generation for EARNINGS / COMPARISON ──
+    # LLM produces JSON narrative; backend renders all numbers from DB.
+    # On any failure (invalid JSON, schema error, render error) fall back to
+    # Path B (legacy free-form generation) — guarantees user always gets an answer.
+    if intent == Intent.EARNINGS_ANALYSIS and tickers:
+        yield ("status", "📡 Gathering earnings data...")
+        try:
+            response = await _structured_earnings_response(req.query, tickers, route_result.quarter)
+            for line in response.split("\n"):
+                yield ("token", line + "\n")
+            return
+        except _StructuredFallback as sf:
+            logger.warning(f"EARNINGS_ANALYSIS path A fallback: {sf}")
+            # fall through to legacy retrieve+LLM path below
+
+    if intent == Intent.COMPARISON and len(tickers) >= 2:
+        yield ("status", "📡 Gathering comparison data...")
+        try:
+            response = await _structured_comparison_response(req.query, tickers, route_result.quarter)
+            for line in response.split("\n"):
+                yield ("token", line + "\n")
+            return
+        except _StructuredFallback as sf:
+            logger.warning(f"COMPARISON path A fallback: {sf}")
+            # fall through to legacy path
+
     # ── Normal path: retrieve + LLM ────────────────────────────────
     tier1_tickers = [t for t in tickers if is_tracked(t)]
     tier2_tickers = [t for t in tickers if t not in tier1_tickers]
@@ -183,9 +272,23 @@ async def handle_ask_stream(req: AskRequest):
     all_context_parts: list[str] = []
     data_freshness = ""
 
+    # Map router-detected recency level -> numeric weight for retriever rerank.
+    from config import RECENCY_WEIGHT_MAP
+    recency_weight = RECENCY_WEIGHT_MAP.get(route_result.recency.value, 0.3)
+    logger.info(
+        f"Retrieval params: mode={mode.value}, intent={intent.value}, "
+        f"recency={route_result.recency.value} (w={recency_weight}), "
+        f"expanded_queries={len(route_result.expanded_queries)}"
+    )
+
     if tier1_tickers:
         context, _, freshness = await retrieve(
-            query=req.query, tickers=tier1_tickers, mode=mode, intent=intent,
+            query=req.query,
+            tickers=tier1_tickers,
+            mode=mode,
+            intent=intent,
+            recency_weight=recency_weight,
+            expanded_queries=route_result.expanded_queries,
         )
         all_context_parts.append(context)
         data_freshness = freshness
