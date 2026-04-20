@@ -27,7 +27,7 @@ def get_embedding_client() -> httpx.AsyncClient:
     if _embedding_client is None:
         _embedding_client = httpx.AsyncClient(
             base_url=EMBEDDING_SERVICE_URL,
-            timeout=10.0,
+            timeout=httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=10.0),
         )
         logger.debug(f"Created embedding-service client → {EMBEDDING_SERVICE_URL}")
     return _embedding_client
@@ -39,7 +39,7 @@ def get_pipeline_client() -> httpx.AsyncClient:
     if _pipeline_client is None:
         _pipeline_client = httpx.AsyncClient(
             base_url=DATA_PIPELINE_URL,
-            timeout=15.0,
+            timeout=httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=10.0),
         )
         logger.debug(f"Created data-pipeline client → {DATA_PIPELINE_URL}")
     return _pipeline_client
