@@ -33,6 +33,14 @@ class TickerContext:
     earnings_text: str = ""
     price_text: str = ""
     doc_counts: dict = field(default_factory=dict)
+    # Lineage of every input that fed into this context, used by summary_cache
+    # to compute input_hash. Format: ["news:<doc_id>", "filing:<doc_id>",
+    # "regulatory:<doc_id>", "earnings_doc:<doc_id>",
+    # "earnings_row:<ticker>:<quarter>", "price:<ticker>:<date>", ...].
+    # Always sorted for deterministic hashing.
+    # Invariant: documents.id is a SHA256 of content (see data-pipeline), so
+    # same id => same content; we never need to hash the text bodies.
+    source_doc_ids: list[str] = field(default_factory=list)
 
     @property
     def total_chars(self) -> int:
@@ -72,6 +80,23 @@ def fetch_context(ticker: str) -> TickerContext:
     earnings_rows = get_earnings(ticker, limit=20)
     price_rows = get_price_snapshots(ticker, limit=30)
     all_filing_docs = filing_docs + earnings_docs
+
+    # Build sorted lineage list (input_hash uses this — must be deterministic)
+    source_doc_ids: list[str] = []
+    source_doc_ids += [f"news:{d['id']}" for d in news_docs if d.get("id")]
+    source_doc_ids += [f"regulatory:{d['id']}" for d in regulatory_docs if d.get("id")]
+    source_doc_ids += [f"filing:{d['id']}" for d in filing_docs if d.get("id")]
+    source_doc_ids += [f"earnings_doc:{d['id']}" for d in earnings_docs if d.get("id")]
+    source_doc_ids += [
+        f"earnings_row:{r.get('ticker','')}:{r.get('quarter','')}"
+        for r in earnings_rows
+    ]
+    source_doc_ids += [
+        f"price:{r.get('ticker','')}:{r.get('date','')}"
+        for r in price_rows
+    ]
+    source_doc_ids.sort()
+
     ctx = TickerContext(
         ticker=ticker,
         news_text=format_news(news_docs),
@@ -87,6 +112,7 @@ def fetch_context(ticker: str) -> TickerContext:
             "earnings_rows": len(earnings_rows),
             "prices": len(price_rows),
         },
+        source_doc_ids=source_doc_ids,
     )
     ctx = _truncate_to_budget(ctx, MAX_CONTEXT_CHARS)
     logger.info(f"  {ticker}: {ctx.doc_counts} | context chars: {ctx.total_chars:,}")

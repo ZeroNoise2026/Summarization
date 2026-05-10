@@ -5,6 +5,10 @@ Prompt templates for generating investment analysis reports via Moonshot (Kimi).
 
 from summary.fetcher import TickerContext
 
+# Bump this when SYSTEM_PROMPT or build_user_prompt changes in a way that
+# should invalidate the summary_cache (e.g., new section, format change).
+PROMPT_VERSION = "v1"
+
 SYSTEM_PROMPT = """You are a senior financial analyst skilled at synthesizing multi-source financial data into concise investment summaries.
 Your summary must meet the following requirements:
 1. STRICT 400-word limit — be concise and prioritize the most important information

@@ -15,9 +15,11 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from config import OUTPUT_DIR
+from config import OUTPUT_DIR, MOONSHOT_MODEL
 from summary.fetcher import fetch_context
 from summary.summarizer import generate_summary
+from summary.prompts import PROMPT_VERSION
+from summary.cache import compute_input_hash, get_cached, put_cached
 from shared.db import get_tracked_tickers
 
 logging.basicConfig(
@@ -36,7 +38,12 @@ def save_report(ticker: str, content: str) -> Path:
 
 
 def process_ticker(ticker: str, dry_run: bool = False) -> bool:
-    """Fetch data, generate summary, and save report. Returns True on success."""
+    """Fetch data, generate summary, and save report. Returns True on success.
+
+    Caching: keyed on input_hash = SHA256(sorted source doc IDs + model +
+    prompt_version). Identical inputs reuse the cached summary instead of
+    re-calling the LLM.
+    """
     try:
         ctx = fetch_context(ticker)
 
@@ -44,11 +51,42 @@ def process_ticker(ticker: str, dry_run: bool = False) -> bool:
             logger.warning(f"No data found for {ticker}, skipping.")
             return False
 
+        input_hash = compute_input_hash(ctx, MOONSHOT_MODEL, PROMPT_VERSION)
+
         if dry_run:
-            logger.info(f"[dry-run] {ticker}: {ctx.doc_counts}, {ctx.total_chars:,} chars total")
+            logger.info(
+                f"[dry-run] {ticker}: {ctx.doc_counts}, {ctx.total_chars:,} chars, "
+                f"input_hash={input_hash[:12]}..."
+            )
             return True
 
+        # 1) Try cache
+        cached = get_cached(ticker, input_hash)
+        if cached is not None:
+            logger.info(
+                f"Cache HIT for {ticker} (hash={input_hash[:12]}..., "
+                f"originally generated {cached.summary_date})"
+            )
+            header = f"# {ticker} Investment Analysis Report\n\n"
+            header += f"> Generated on {cached.summary_date.isoformat()} (cached)\n"
+            header += f"> Data: {ctx.doc_counts}\n\n"
+            path = save_report(ticker, header + cached.content)
+            logger.info(f"Report saved from cache: {path}")
+            return True
+
+        # 2) Miss — call the LLM
+        logger.info(f"Cache MISS for {ticker} (hash={input_hash[:12]}...) — calling LLM")
         report = generate_summary(ctx)
+
+        # 3) Write back to cache (best-effort, won't raise)
+        put_cached(
+            ticker=ticker,
+            input_hash=input_hash,
+            content=report,
+            model=MOONSHOT_MODEL,
+            prompt_version=PROMPT_VERSION,
+            source_doc_ids=ctx.source_doc_ids,
+        )
 
         header = f"# {ticker} Investment Analysis Report\n\n"
         header += f"> Generated on {date.today().isoformat()}\n"
