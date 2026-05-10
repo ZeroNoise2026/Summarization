@@ -32,6 +32,7 @@ RETURNS TABLE (
     doc_type TEXT,
     section TEXT,
     title TEXT,
+    url TEXT,
     similarity FLOAT
 )
 LANGUAGE plpgsql
@@ -47,6 +48,7 @@ BEGIN
         d.doc_type,
         d.section,
         d.title,
+        d.url,
         -- cosine similarity = 1 - cosine distance
         -- pgvector <=> operator returns cosine distance (0 = identical, 2 = opposite)
         (1 - (d.embedding <=> query_embedding))::FLOAT AS similarity

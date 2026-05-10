@@ -14,12 +14,25 @@ import time
 
 from shared.db import is_tracked, update_last_queried, promote_ticker
 from shared.db import get_earnings, get_price_snapshots
-from question.models import AskRequest, Intent, QueryMode
+from question.models import AskRequest, Intent, QueryMode, Source
 from question.router import router
 from question.retriever import retrieve
 from question.live_fetcher import fetch_tier2_context, fetch_live_quote_raw
 from question.tier2_cache import cache
 from question.generator import generate_answer_stream
+
+
+def _dedupe_sources(sources: list[Source]) -> list[dict]:
+    """Drop duplicates by Source.id, preserving first-seen order. Returns dicts
+    so the SSE layer can json.dumps() without further conversion."""
+    seen: set[str] = set()
+    out: list[dict] = []
+    for s in sources:
+        if s.id in seen:
+            continue
+        seen.add(s.id)
+        out.append(s.model_dump())
+    return out
 
 logger = logging.getLogger(__name__)
 
@@ -237,6 +250,19 @@ async def handle_ask_stream(req: AskRequest):
         # Send in chunks so the UI renders progressively
         for line in response.split("\n"):
             yield ("token", line + "\n")
+
+        # Citations: synthetic table-style sources (no URL — frontend renders them
+        # as grey labels, not links).
+        fast_sources = [
+            Source(
+                id=f"table:price:{t}:live",
+                doc_type="price_table",
+                ticker=t,
+                label=f"Live quote + Supabase price_snapshot — {t}",
+            )
+            for t in tickers
+        ]
+        yield ("sources", _dedupe_sources(fast_sources))
         return
 
     # ── Path A (方案 4): structured generation for EARNINGS / COMPARISON ──
@@ -249,6 +275,18 @@ async def handle_ask_stream(req: AskRequest):
             response = await _structured_earnings_response(req.query, tickers, route_result.quarter)
             for line in response.split("\n"):
                 yield ("token", line + "\n")
+            quarter_label = route_result.quarter or "latest"
+            path_a_sources = [
+                Source(
+                    id=f"table:earnings:{t}:{quarter_label}",
+                    doc_type="earnings_table",
+                    ticker=t,
+                    date=route_result.quarter,
+                    label=f"Supabase earnings table — {t} ({quarter_label})",
+                )
+                for t in tickers
+            ]
+            yield ("sources", _dedupe_sources(path_a_sources))
             return
         except _StructuredFallback as sf:
             logger.warning(f"EARNINGS_ANALYSIS path A fallback: {sf}")
@@ -260,6 +298,18 @@ async def handle_ask_stream(req: AskRequest):
             response = await _structured_comparison_response(req.query, tickers, route_result.quarter)
             for line in response.split("\n"):
                 yield ("token", line + "\n")
+            quarter_label = route_result.quarter or "latest"
+            path_a_sources = [
+                Source(
+                    id=f"table:earnings:{t}:{quarter_label}",
+                    doc_type="earnings_table",
+                    ticker=t,
+                    date=route_result.quarter,
+                    label=f"Supabase earnings table — {t} ({quarter_label})",
+                )
+                for t in tickers
+            ]
+            yield ("sources", _dedupe_sources(path_a_sources))
             return
         except _StructuredFallback as sf:
             logger.warning(f"COMPARISON path A fallback: {sf}")
@@ -270,6 +320,7 @@ async def handle_ask_stream(req: AskRequest):
     tier2_tickers = [t for t in tickers if t not in tier1_tickers]
     yield ("status", f"📡 Searching data for {', '.join(tickers)}...")
     all_context_parts: list[str] = []
+    all_sources: list[Source] = []   # Path B citations — emitted after LLM stream
     data_freshness = ""
 
     # Map router-detected recency level -> numeric weight for retriever rerank.
@@ -282,7 +333,7 @@ async def handle_ask_stream(req: AskRequest):
     )
 
     if tier1_tickers:
-        context, _, freshness = await retrieve(
+        context, sources, freshness = await retrieve(
             query=req.query,
             tickers=tier1_tickers,
             mode=mode,
@@ -291,9 +342,13 @@ async def handle_ask_stream(req: AskRequest):
             expanded_queries=route_result.expanded_queries,
         )
         all_context_parts.append(context)
+        all_sources.extend(sources)
         data_freshness = freshness
 
     for t in tier2_tickers:
+        # tier2 (untracked tickers) goes through live API fetcher — not yet
+        # producing Source objects. Skipping citations for these for now;
+        # frontend will just show fewer sources.
         cached = cache.get(t, intent)
         if cached:
             all_context_parts.append(cached)
@@ -338,3 +393,9 @@ async def handle_ask_stream(req: AskRequest):
             logger.error(f"Generation thread raised: {item}")
             break
         yield item
+
+    # Path B citations: emit after the LLM stream finishes so the UI can
+    # render a sources block alongside the answer. Empty list is fine — UI
+    # just hides the block when items=[].
+    if all_sources:
+        yield ("sources", _dedupe_sources(all_sources))

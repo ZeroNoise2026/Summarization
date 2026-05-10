@@ -46,10 +46,15 @@ async def ask_stream(req: AskRequest):
                     if keepalive_counter % 20 == 0:
                         yield ": keepalive\n\n"
                 else:
-                    event_type, text = item
+                    event_type, payload = item
                     if event_type == "token":
                         has_tokens = True
-                    yield f"data: {json.dumps({'type': event_type, 'text': text})}\n\n"
+                    if event_type == "sources":
+                        # payload is already a list[dict]; keep it under "items" so
+                        # frontends can disambiguate from text-bearing events.
+                        yield f"data: {json.dumps({'type': 'sources', 'items': payload})}\n\n"
+                    else:
+                        yield f"data: {json.dumps({'type': event_type, 'text': payload})}\n\n"
         except Exception as e:
             logger.error(f"Stream generation error: {type(e).__name__}: {e}")
             yield f"data: [Error: The AI model is temporarily unavailable ({type(e).__name__}). Please wait and try again.]\n\n"

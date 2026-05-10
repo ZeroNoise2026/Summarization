@@ -153,11 +153,16 @@ async def semantic_search(
 
     sources = []
     for d in docs:
+        # documents.id is a deterministic SHA256 (see data-pipeline/store.make_document_id),
+        # so the same chunk always gets the same Source.id across runs.
+        doc_id = d.get("id") or ""
         sources.append(Source(
+            id=f"doc:{doc_id}" if doc_id else f"doc:unknown:{d.get('ticker','?')}:{d.get('date','?')}",
             doc_type=d.get("doc_type", "news"),
             ticker=d.get("ticker", ""),
             date=d.get("date"),
             title=d.get("title"),
+            url=d.get("url"),  # NULL for filings/earnings doc rows; present for news after schema migration
             similarity=d.get("similarity"),
         ))
 
@@ -255,13 +260,27 @@ def structured_lookup(
         rows = get_earnings(ticker, limit=8)
         if rows:
             parts.append(f"### {ticker} Earnings\n\n{format_earnings(rows)}")
-            sources.append(Source(doc_type="earnings", ticker=ticker, date=rows[0].get("date")))
+            latest_q = rows[0].get("quarter") or rows[0].get("date") or "latest"
+            sources.append(Source(
+                id=f"table:earnings:{ticker}:{latest_q}",
+                doc_type="earnings_table",
+                ticker=ticker,
+                date=rows[0].get("date"),
+                label=f"Supabase earnings table — {ticker} ({len(rows)} quarters, latest {latest_q})",
+            ))
 
     if intent in (Intent.PRICE_QUERY, Intent.TRADE_SUGGESTION, Intent.COMPARISON, Intent.GENERAL_ANALYSIS):
         rows = get_price_snapshots(ticker, limit=5)
         if rows:
             parts.append(f"### {ticker} Price Snapshot\n\n{format_prices(rows)}")
-            sources.append(Source(doc_type="price", ticker=ticker, date=rows[0].get("date")))
+            latest_d = rows[0].get("date") or "latest"
+            sources.append(Source(
+                id=f"table:price:{ticker}:{latest_d}",
+                doc_type="price_table",
+                ticker=ticker,
+                date=latest_d,
+                label=f"Supabase price_snapshot — {ticker} (latest {latest_d})",
+            ))
 
     return "\n\n".join(parts), sources
 

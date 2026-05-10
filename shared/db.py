@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 _client: Optional[Client] = None
 
-FIELDS_DOCUMENTS = "id, content, ticker, date, source, doc_type, section, title"
+FIELDS_DOCUMENTS = "id, content, ticker, date, source, doc_type, section, title, url"
 
 
 def _get_client() -> Client:

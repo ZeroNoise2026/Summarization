@@ -72,11 +72,26 @@ class RouterResult(BaseModel):
 
 
 class Source(BaseModel):
-    """Tracks where a piece of retrieved context came from (internal use)."""
+    """Tracks where a piece of retrieved context came from.
+
+    Two flavors share the same shape so the frontend renders them uniformly:
+      - Document-derived (id="doc:<sha>"): chunked news/filing/earnings_doc.
+        Has title; may have url.
+      - Table-derived  (id="table:<kind>:<ticker>:<key>"): synthesized from
+        structured tables. Has label; never has url.
+
+    Render rules (frontend):
+      - url present                 -> clickable anchor
+      - title present, no url       -> grey "<title> (no link)"
+      - else                        -> grey label
+    """
+    id: str = Field(..., description="Stable identifier; doc:<sha> or table:<kind>:<key>")
     doc_type: str
     ticker: str
     date: Optional[str] = None
     title: Optional[str] = None
+    url: Optional[str] = None
+    label: Optional[str] = None
     similarity: Optional[float] = None
 
 
