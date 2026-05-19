@@ -9,7 +9,7 @@ COPY config.py .
 COPY shared/ shared/
 COPY summary/ summary/
 
-# summary 输出目录
+# summary output directory
 RUN mkdir -p /app/output
 
 CMD ["python", "-m", "summary.run", "--all"]
