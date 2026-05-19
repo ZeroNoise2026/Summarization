@@ -28,10 +28,10 @@ class Intent(str, Enum):
 class Recency(str, Enum):
     """How strongly the user wants fresh data — controls retriever's recency weight.
 
-    high   -> 'latest', 'today', 'recent', '最新' — news-leaning
+    high   -> 'latest', 'today', 'recent' (and non-English equivalents) — news-leaning
     medium -> default for most queries
     low    -> educational / explanation queries
-    none   -> historical: 'last year', 'during COVID', '去年' — pure semantic
+    none   -> historical: 'last year', 'during COVID' (and non-English equivalents) — pure semantic
     """
     HIGH   = "high"
     MEDIUM = "medium"
@@ -56,7 +56,7 @@ class RouterResult(BaseModel):
             "multi-vector retrieval to overcome embedding bias. Empty = no expansion."
         ),
     )
-    # ── Ticker-less query fallback (方案 D) ──
+    # ── Ticker-less query fallback (Plan D) ──
     needs_clarification: bool = Field(
         default=False,
         description="True when no ticker extracted and context_tickers has >=2 options — UI should show chips.",

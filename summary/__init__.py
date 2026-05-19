@@ -1,1 +1,1 @@
-"""summary — 离线报告生成服务 (CLI)"""
+"""summary — offline report generation service (CLI)."""

@@ -1,8 +1,8 @@
 """
 question/templates/renderer.py
-主入口 — 把 (template_source, context) 渲染成最终 Markdown 字符串.
+Main entry point — renders (template_source, context) into the final Markdown string.
 
-任何异常 (未定义变量 / 渲染错) 都包成 RenderError, 调用方捕获后走 fallback.
+Any exception (undefined variable / render error) is wrapped as RenderError; the caller catches it and goes through fallback.
 """
 from __future__ import annotations
 import logging
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 class RenderError(RuntimeError):
-    """模板渲染失败 — 调用方应 fallback 到原生成路径."""
+    """Template rendering failed — the caller should fallback to the legacy generation path."""
 
 
 def render(template_source: str, context: dict[str, Any]) -> str:
@@ -32,10 +32,10 @@ def render(template_source: str, context: dict[str, Any]) -> str:
         raise RenderError(f"Undefined variable during render: {e}") from e
     except TemplateSyntaxError as e:
         raise RenderError(f"Template syntax error: {e}") from e
-    except Exception as e:  # pragma: no cover — 捕获一切防崩溃
+    except Exception as e:  # pragma: no cover — catch-all to prevent crashes
         raise RenderError(f"Unexpected render error: {type(e).__name__}: {e}") from e
 
-    # 防御: 渲染完输出里不应再有 {{ }} 残留
+    # Defensive: after render, the output should not contain any residual {{ }}
     if "{{" in out or "}}" in out:
         raise RenderError(f"Residual mustache markers in output (first 120 chars): {out[:120]!r}")
     return out

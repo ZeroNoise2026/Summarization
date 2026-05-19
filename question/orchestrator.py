@@ -61,7 +61,7 @@ def _fmt_money(val) -> str:
 async def _fast_price_response(tickers: list[str]) -> str:
     """Build a formatted price response directly from DB + live API.
 
-    Template-rendered (方案 4 Path A for PRICE_QUERY). No LLM involved — this
+    Template-rendered (Plan 4 Path A for PRICE_QUERY). No LLM involved — this
     intent is already deterministic. We keep the old behaviour as fallback
     in case the template renderer raises (which would indicate a bug, not
     bad LLM output, but we stay safe).
@@ -91,7 +91,7 @@ async def _fast_price_response(tickers: list[str]) -> str:
 
 
 # ═══════════════════════════════════════════
-# Path A (方案 4): structured generation for EARNINGS / COMPARISON
+# Path A (Plan 4): structured generation for EARNINGS / COMPARISON
 # LLM produces JSON narrative, backend renders all numbers from DB.
 # Failures raise _StructuredFallback so the orchestrator can route to Path B.
 # ═══════════════════════════════════════════
@@ -215,7 +215,7 @@ async def handle_ask_stream(req: AskRequest):
     mode = route_result.mode
     yield ("status", "🔍 Analyzing your question...")
 
-    # ── Clarification gate (方案 D) ─────────────────────────────────
+    # ── Clarification gate (Plan D) ─────────────────────────────────
     # No ticker extracted + watchlist has multiple candidates →
     # don't call LLM; emit chips for UI to render.
     if route_result.needs_clarification:
@@ -227,7 +227,7 @@ async def handle_ask_stream(req: AskRequest):
         yield ("clarification", payload)
         return
 
-    # ── Auto-bind note (方案 D, single-watchlist case) ──────────────
+    # ── Auto-bind note (Plan D, single-watchlist case) ──────────────
     if route_result.auto_bound_ticker:
         yield ("status", f"ℹ️ Assuming you mean ${route_result.auto_bound_ticker} (from your watchlist)…")
 
@@ -265,7 +265,7 @@ async def handle_ask_stream(req: AskRequest):
         yield ("sources", _dedupe_sources(fast_sources))
         return
 
-    # ── Path A (方案 4): structured generation for EARNINGS / COMPARISON ──
+    # ── Path A (Plan 4): structured generation for EARNINGS / COMPARISON ──
     # LLM produces JSON narrative; backend renders all numbers from DB.
     # On any failure (invalid JSON, schema error, render error) fall back to
     # Path B (legacy free-form generation) — guarantees user always gets an answer.

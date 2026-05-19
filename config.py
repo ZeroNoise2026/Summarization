@@ -66,7 +66,7 @@ RECENCY_HALF_LIFE_DAYS: float = float(os.getenv("RECENCY_HALF_LIFE_DAYS", "14"))
 RECENCY_OVERFETCH_MULTIPLIER: int = int(os.getenv("RECENCY_OVERFETCH_MULTIPLIER", "4"))
 # Map of router-detected recency level -> weight applied to recency_decay term.
 RECENCY_WEIGHT_MAP: dict[str, float] = {
-    "high":   float(os.getenv("RECENCY_WEIGHT_HIGH",   "0.5")),  # "latest", "today", "最新"
+    "high":   float(os.getenv("RECENCY_WEIGHT_HIGH",   "0.5")),  # "latest", "today" (and non-English equivalents)
     "medium": float(os.getenv("RECENCY_WEIGHT_MEDIUM", "0.3")),  # default for news/general
     "low":    float(os.getenv("RECENCY_WEIGHT_LOW",    "0.1")),  # mostly semantic
     "none":   float(os.getenv("RECENCY_WEIGHT_NONE",   "0.0")),  # historical queries

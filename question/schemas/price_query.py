@@ -1,12 +1,12 @@
 """
 question/schemas/price_query.py
-PRICE_QUERY — 零 LLM 路径. 数据全部从 live_fetcher + DB 取, 模板直接渲染.
+PRICE_QUERY — zero-LLM path. All data is pulled from live_fetcher + DB; the template renders directly.
 
-不需要 SCHEMA / SYSTEM_PROMPT / FEW_SHOT —— 无 LLM 参与.
+No SCHEMA / SYSTEM_PROMPT / FEW_SHOT needed — no LLM involvement.
 """
 from __future__ import annotations
 
-# PRICE_QUERY 模板 — 所有字段都在 build_context 里填了"N/A"或字符串, 无需 {% if %}.
+# PRICE_QUERY template — all fields are filled with "N/A" or strings in build_context, so no {% if %} needed.
 TEMPLATE = """## {{ ticker }}
 **{{ name }}**  
 **Price:** {{ price_str }}  
@@ -67,16 +67,16 @@ def build_context(
     earnings: list[dict] | None,
     snapshots: list[dict] | None,
 ) -> dict:
-    """构造 render() 的 context. 所有可能缺失的字段都填占位符, 保证模板渲染不 fail.
+    """Build the context for render(). All potentially-missing fields are filled with placeholders to ensure template rendering does not fail.
 
     Args:
         ticker: uppercase symbol
-        live: live quote dict (FMP 返回结构) 或 None
-        earnings: get_earnings(ticker) 返回, 最新在前
+        live: live quote dict (FMP response structure) or None
+        earnings: result of get_earnings(ticker), newest first
         snapshots: get_price_snapshots(ticker) fallback
 
     Returns:
-        dict 直接喂给 templates.render(TEMPLATE, ctx)
+        dict fed directly into templates.render(TEMPLATE, ctx)
     """
     from question.templates.functions import render_table
 
@@ -88,21 +88,21 @@ def build_context(
     price = live.get("price")
     name = live.get("name", ticker)
 
-    # 2. TTM P/E — 如果 live 没给, 用最近 4 季度 EPS 算
+    # 2. TTM P/E — if live didn't provide it, compute from the most recent 4 quarters of EPS
     pe = live.get("pe")
     if pe is None and price and earnings:
         eps_vals = [float(e["eps"]) for e in earnings[:4] if e.get("eps") is not None]
         if eps_vals and sum(eps_vals) > 0:
             pe = float(price) / sum(eps_vals)
 
-    # 3. 若 live 缺 price, fallback 到 DB snapshot
+    # 3. If live is missing price, fallback to the DB snapshot
     if price is None and snapshots:
         s = snapshots[0]
         price = s.get("close_price")
         if pe is None:
             pe = s.get("pe_ratio")
 
-    # 4. earnings 表格 (markdown)
+    # 4. earnings table (markdown)
     earnings_section = ""
     if earnings:
         tbl = render_table(

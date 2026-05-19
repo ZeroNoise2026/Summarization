@@ -106,7 +106,7 @@ RECENCY_KEYWORDS: dict[Recency, list[str]] = {
         "latest", "today", "yesterday", "recent", "recently",
         "now", "current", "this week", "this morning", "breaking",
         "just announced", "any news", "what's new",
-        # Chinese
+        # Chinese keywords (kept as data for matching Chinese user input)
         "最新", "今天", "昨天", "最近", "现在", "当前", "本周",
     ],
     Recency.NONE: [
@@ -115,7 +115,7 @@ RECENCY_KEYWORDS: dict[Recency, list[str]] = {
         "during covid", "during 2020", "during 2021", "during 2022",
         "in 2020", "in 2021", "in 2022", "in 2023", "in 2024",
         "all-time", "all time", "ever", "since", "back in",
-        # Chinese
+        # Chinese keywords (kept as data for matching Chinese user input)
         "去年", "历史", "过去", "以前", "当年",
     ],
     # Recency.LOW reserved for future use (educational / explanation queries)
@@ -314,7 +314,7 @@ class QueryRouter:
 
         mode = INTENT_TO_MODE.get(intent, QueryMode.HYBRID)
 
-        # ── Ticker-less fallback (方案 D) ───────────────────────────
+        # ── Ticker-less fallback (Plan D) ───────────────────────────
         # If no ticker was extracted (query-level OR via explicit_tickers),
         # branch on user's watchlist (context_tickers):
         #   0 → keep tickers=[], let downstream go generic / market-default.

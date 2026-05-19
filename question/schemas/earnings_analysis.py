@@ -1,18 +1,18 @@
 """
 question/schemas/earnings_analysis.py
-EARNINGS_ANALYSIS — LLM 参与 (narrative only), 所有数字由后端确定性计算.
+EARNINGS_ANALYSIS — LLM-involved (narrative only); all numbers computed deterministically by the backend.
 
-流程:
-  1. build_context(ticker, earnings) — 从 DB earnings 行算出:
+Flow:
+  1. build_context(ticker, earnings) — compute from DB earnings rows:
        revenue_yoy / revenue_qoq / eps_yoy / eps_qoq / earnings_table / latest_*
   2. kimi_structured.generate(SYSTEM_PROMPT, user_query, context_summary, SCHEMA)
-     → 产出 {"headline": str, "narrative": str, "key_drivers": [str,...]}
-  3. render(TEMPLATE, {...context, **llm_output}) — 最终 Markdown
+     → produces {"headline": str, "narrative": str, "key_drivers": [str,...]}
+  3. render(TEMPLATE, {...context, **llm_output}) — final Markdown
 """
 from __future__ import annotations
 from typing import Any
 
-# ─── 1. LLM 输出 JSON Schema ───────────────────────────────────────
+# ─── 1. JSON Schema for LLM output ───────────────────────────────────────
 SCHEMA: dict[str, Any] = {
     "type": "object",
     "required": ["headline", "narrative"],
@@ -40,7 +40,7 @@ SCHEMA: dict[str, Any] = {
     },
 }
 
-# ─── 2. 给 LLM 的 System prompt ─────────────────────────────────────
+# ─── 2. System prompt for the LLM ─────────────────────────────────────
 SYSTEM_PROMPT = """You are a financial analyst. Produce a STRUCTURED JSON response analyzing a company's recent earnings.
 
 CRITICAL RULES:
@@ -50,7 +50,7 @@ CRITICAL RULES:
 4. Ground every claim in the CONTEXT SUMMARY provided. Do NOT fabricate new facts.
 5. Use a professional, concise tone. Avoid hype words ("breathtaking", "stunning")."""
 
-# ─── 3. Few-shot 示例 ───────────────────────────────────────────────
+# ─── 3. Few-shot examples ───────────────────────────────────────────────
 FEW_SHOT: list[dict[str, str]] = [
     {
         "role": "user",
@@ -75,7 +75,7 @@ Respond in JSON matching the schema.""",
     },
 ]
 
-# ─── 4. 最终渲染模板 ────────────────────────────────────────────────
+# ─── 4. Final render template ────────────────────────────────────────────────
 TEMPLATE = """## {{ ticker }} — Earnings Analysis
 
 {{ quarter_warning }}**{{ headline }}**

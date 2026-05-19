@@ -1,13 +1,13 @@
 """
 question/templates/engine.py
-Jinja2 SandboxedEnvironment — 单例, 启动时构建一次.
+Jinja2 SandboxedEnvironment — singleton, built once at startup.
 
-安全策略:
-  * 禁用 {% block %} / {% for %} / {% if %} 等块语法 — LLM 只能用 {{var}} 和 | filter
-    实现方式: 重写 block_start_string/block_end_string 为不可能在正常文本出现的哨兵串,
-    任何 {% ... %} 都会被当作普通文本. 这比扫描字符串做正则更可靠.
-  * StrictUndefined — 模板里出现未定义变量时抛 UndefinedError (不静默输出空串).
-  * autoescape=False — 我们输出 Markdown, 不是 HTML.
+Security policy:
+  * Disable block syntax like {% block %} / {% for %} / {% if %} — the LLM can only use {{var}} and | filter
+    Mechanism: override block_start_string/block_end_string to sentinel strings unlikely to appear in normal text,
+    so any {% ... %} is treated as plain text. This is more reliable than scanning the string with regex.
+  * StrictUndefined — raises UndefinedError when an undefined variable appears in the template (no silent empty output).
+  * autoescape=False — we output Markdown, not HTML.
 """
 from __future__ import annotations
 import logging
@@ -19,7 +19,7 @@ from .functions import ALL_FUNCTIONS
 
 logger = logging.getLogger(__name__)
 
-# 哨兵串: 32 字节随机文本, 正文里出现概率 ≈ 0. 等效于"禁用块语法".
+# Sentinel string: 32-byte random text, probability of appearing in body content ≈ 0. Equivalent to "disable block syntax".
 _BLOCK_SENTINEL_START = "{%__QA_PLAN4_BLOCK_DISABLED__"
 _BLOCK_SENTINEL_END = "__QA_PLAN4_BLOCK_DISABLED__%}"
 
@@ -27,7 +27,7 @@ _env: SandboxedEnvironment | None = None
 
 
 def get_env() -> SandboxedEnvironment:
-    """Lazy singleton — 全进程共享一个 Environment (模板编译缓存)."""
+    """Lazy singleton — one Environment shared across the entire process (template compile cache)."""
     global _env
     if _env is None:
         env = SandboxedEnvironment(

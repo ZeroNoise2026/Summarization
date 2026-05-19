@@ -1,11 +1,11 @@
 """
 question/schemas/comparison.py
-COMPARISON — 多 ticker 财务对比. 方案 4 Path A.
+COMPARISON — multi-ticker financial comparison. Plan 4 Path A.
 
-输入: 2-4 个 ticker, 每个有 earnings 行.
-后端算: 每个 ticker 的 latest Q rev/eps + FY revenue + YoY + QoQ.
-LLM 产: headline, narrative, 各 ticker 的 bullet 定位 (qualitative only).
-模板渲染: 多表格 (latest quarter, FY view) + narrative.
+Input: 2-4 tickers, each with earnings rows.
+Backend computes: each ticker's latest Q rev/eps + FY revenue + YoY + QoQ.
+LLM produces: headline, narrative, per-ticker bullet positioning (qualitative only).
+Template rendering: multiple tables (latest quarter, FY view) + narrative.
 """
 from __future__ import annotations
 from typing import Any
@@ -91,7 +91,7 @@ Respond with ONLY a JSON object matching the required schema.""",
     },
 ]
 
-# ─── 模板 ────────────────────────────────────────────────────
+# ─── Template ────────────────────────────────────────────────────
 TEMPLATE = """## Comparison: {{ tickers_joined }}
 
 {{ quarter_warning }}**{{ headline }}**

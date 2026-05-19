@@ -1,6 +1,6 @@
 """
 question/templates/filters.py
-Jinja2 filters — 统一的数字/百分比格式化. 全部对 None/异常输入鲁棒 (返回 "N/A").
+Jinja2 filters — uniform number/percentage formatting. All robust against None / invalid inputs (return "N/A").
 """
 from __future__ import annotations
 from typing import Any
@@ -16,13 +16,13 @@ def _to_float(v: Any) -> float | None:
 
 
 def money(val: Any, *, decimals: int | None = None) -> str:
-    """金额格式化: 12_345_678_901 -> '$12.3B', 840_000_000 -> '$840M'.
+    """Money formatting: 12_345_678_901 -> '$12.3B', 840_000_000 -> '$840M'.
 
-    - T / B: 1 位小数 (可被 decimals 覆盖)
-    - M / K: 默认 0 位小数
-    - < 1K:  2 位小数 (股价场景)
-    - 负数加前缀 '-'
-    - None / 非数: 'N/A'
+    - T / B: 1 decimal place (can be overridden by decimals)
+    - M / K: default 0 decimals
+    - < 1K:  2 decimals (stock-price use case)
+    - Negative values prefixed with '-'
+    - None / non-numeric: 'N/A'
     """
     f = _to_float(val)
     if f is None:
@@ -46,9 +46,9 @@ def money(val: Any, *, decimals: int | None = None) -> str:
 
 
 def pct(val: Any, *, decimals: int = 2, signed: bool = True) -> str:
-    """百分比格式化. 输入 0.1537 -> '+15.37%'.
+    """Percentage formatting. Input 0.1537 -> '+15.37%'.
 
-    约定: 传入的是 *小数形式* (0.15 = 15%). 若已经是 15 这种大数字, 请自行 /100.
+    Convention: input is *decimal form* (0.15 = 15%). If it's already a large number like 15, divide by 100 yourself first.
     """
     f = _to_float(val)
     if f is None:
@@ -60,7 +60,7 @@ def pct(val: Any, *, decimals: int = 2, signed: bool = True) -> str:
 
 
 def compact(val: Any, *, decimals: int = 0) -> str:
-    """纯数量 (非货币) 的紧凑表示: 1_234_567 -> '1.2M'."""
+    """Compact representation of plain quantities (non-currency): 1_234_567 -> '1.2M'."""
     f = _to_float(val)
     if f is None:
         return "N/A"
@@ -75,7 +75,7 @@ def compact(val: Any, *, decimals: int = 0) -> str:
     return f"{sign}{v:,.{decimals}f}"
 
 
-# 便于 engine.register_filters 调用的集中导出
+# Centralized export for convenient use by engine.register_filters
 ALL_FILTERS = {
     "money": money,
     "pct": pct,

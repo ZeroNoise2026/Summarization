@@ -10,6 +10,7 @@ Usage:
 """
 
 import argparse
+import json
 import logging
 import sys
 from datetime import date
@@ -21,6 +22,13 @@ from summary.summarizer import generate_summary
 from summary.prompts import PROMPT_VERSION
 from summary.cache import compute_input_hash, get_cached, put_cached
 from shared.db import get_tracked_tickers
+
+# Make the top-level skills/ package importable from this CLI. Summarization
+# is run from inside its own dir (cwd = Summarization/), so its parent — the
+# repo root — needs to be on sys.path to find `skills`.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 logging.basicConfig(
     level=logging.INFO,
@@ -101,14 +109,91 @@ def process_ticker(ticker: str, dry_run: bool = False) -> bool:
         return False
 
 
+def _parse_skill_args(raw: str | None) -> dict:
+    """Accept either JSON ('{"tickers":["AAPL","MSFT"]}') or a simple
+    comma-separated k=v string ('ticker=AAPL,dry_run=true'). The k=v form
+    is convenient for one-off CLI use; JSON is required for nested values
+    like lists."""
+    if not raw:
+        return {}
+    s = raw.strip()
+    if s.startswith("{"):
+        return json.loads(s)
+    out: dict = {}
+    for pair in s.split(","):
+        if not pair.strip():
+            continue
+        if "=" not in pair:
+            raise ValueError(f"--args expected k=v pairs, got {pair!r}")
+        k, v = pair.split("=", 1)
+        k, v = k.strip(), v.strip()
+        # Tiny type coercion so booleans aren't passed as the string "true".
+        if v.lower() in {"true", "false"}:
+            out[k] = (v.lower() == "true")
+        elif v.lstrip("-").isdigit():
+            out[k] = int(v)
+        else:
+            out[k] = v
+    return out
+
+
+def run_skill(name: str, args: dict) -> bool:
+    """Dispatch to the skills/ framework. Returns True on success."""
+    from skills import get_skill  # local import: skills/ may live outside venv
+    try:
+        skill = get_skill(name)
+    except KeyError as e:
+        logger.error(str(e))
+        return False
+    try:
+        result = skill.run(**args)
+    except TypeError as e:
+        logger.error("Skill %r received bad args %s: %s", name, args, e)
+        return False
+    except Exception as e:
+        logger.error("Skill %r failed: %s", name, e, exc_info=True)
+        return False
+
+    # Print the human-readable content + any artifact paths. Keep this
+    # minimal — the skill itself already logs detail.
+    print(result.content)
+    for path in result.artifacts:
+        logger.info("Artifact: %s", path)
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generate investment analysis reports via Kimi (Moonshot)")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--ticker", type=str, help="Comma-separated ticker symbols (e.g. AAPL,MSFT)")
     group.add_argument("--all", action="store_true", help="Process all active tickers from Supabase")
+    group.add_argument("--skill", type=str, help="Run a skill by name (see `python -m summary.run --list-skills`)")
+    group.add_argument("--list-skills", action="store_true", help="List available skills and exit")
     parser.add_argument("--dry-run", action="store_true", help="Fetch data only, skip Moonshot API call")
+    parser.add_argument("--args", type=str, default="", help='Skill arguments: JSON ({"k":"v"}) or k=v,k=v')
     args = parser.parse_args()
 
+    # ── skills branch ──
+    if args.list_skills:
+        from skills import list_skills, all_skill_specs
+        names = list_skills()
+        if not names:
+            print("No skills registered.")
+        else:
+            print("Available skills:")
+            for spec in all_skill_specs():
+                print(f"  {spec['name']:<24} {spec['description']}")
+        sys.exit(0)
+
+    if args.skill:
+        skill_args = _parse_skill_args(args.args)
+        # --dry-run is a common flag; surface it to the skill if it accepts one.
+        if args.dry_run and "dry_run" not in skill_args:
+            skill_args["dry_run"] = True
+        ok = run_skill(args.skill, skill_args)
+        sys.exit(0 if ok else 1)
+
+    # ── original CLI behavior (unchanged) ──
     if args.all:
         rows = get_tracked_tickers(active_only=True)
         tickers = [r["ticker"] for r in rows]

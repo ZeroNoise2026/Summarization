@@ -1,7 +1,7 @@
 """
 summary/fetcher.py
 Extracts data from Supabase and assembles structured context for each ticker.
-格式化函数已提取到 shared/formatters.py, 这里调用共享版本。
+Formatting helpers live in shared/formatters.py — we call the shared version here.
 """
 
 import logging

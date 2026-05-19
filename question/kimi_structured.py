@@ -1,13 +1,13 @@
 """
 question/kimi_structured.py
-方案 4 — 调用 KIMI 产出结构化 JSON, 校验后返回.
+Plan 4 — call KIMI to produce structured JSON, validate, then return.
 
-与 shared/llm.py::chat() 的区别:
-  * 强制 response_format={"type":"json_object"}
-  * jsonschema 验证, 失败重试 1 次
-  * 返回 dict (已 parse), 失败抛 StructuredGenError
+Differences from shared/llm.py::chat():
+  * Forces response_format={"type":"json_object"}
+  * jsonschema validation, retry once on failure
+  * Returns dict (already parsed), raises StructuredGenError on failure
 
-⚠️ moonshot 对 json_object 支持: 文档要求 prompt 里包含 "JSON" 字样.
+WARNING: moonshot's json_object support — the docs require the prompt to contain the word "JSON".
 """
 from __future__ import annotations
 import json
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 class StructuredGenError(RuntimeError):
-    """LLM 未能产出合法 JSON. 调用方应 fallback."""
+    """LLM failed to produce valid JSON. The caller should fallback."""
 
 
 def generate_json(
