@@ -1,260 +1,202 @@
 # Summarization
 
-Two co-located services sharing the same data layer and LLM client:
+Two co-located services sharing one data layer and one LLM client.
+
+> Part of the [QuantAgent](https://github.com/ZeroNoise2026/QuantAgent) stack.
+> You do not clone this repo directly: clone QuantAgent and run `./dev.sh`,
+> which pulls this one as a sibling and sets up its venv and `.env`.
 
 | Service | Form | Purpose |
-|---------|------|---------|
-| **summary** | CLI / scheduled job | Generates a comprehensive Markdown research report per ticker by pulling everything from Supabase and prompting Moonshot. Caches by input hash so unchanged inputs reuse a previous report. |
-| **question** | FastAPI service (port 8003) | Powers RAG-based ad-hoc Q&A: structured-output intents (earnings, comparison, price) plus a templated rendering layer that keeps numbers deterministic and lets the LLM write only the prose. |
+|---|---|---|
+| **summary** | CLI / scheduled job | Generates a Markdown research report per ticker from Supabase + Moonshot. Caches by input hash, so unchanged inputs reuse the previous report. |
+| **question** | FastAPI service (:8003) | RAG-based ad-hoc Q&A: structured-output intents (earnings, comparison, price) plus a templated rendering layer that keeps numbers deterministic and lets the LLM write only the prose. |
 
-> **For PMs / analysts:** This repo is where the "deep analysis" lives.
-> `summary` is the engine behind the daily research report you can pull
-> for any ticker on your watchlist. `question` is the engine behind the
-> chat answers in ChatbotUI when you ask questions like "how was AAPL's
-> last quarter" — it makes sure the numbers in the answer come from the
-> database, not from the model's memory.
+> **For PMs / analysts:** this is where the deep analysis lives. `summary` is the
+> engine behind the daily research report for any watchlist ticker. `question`
+> is the engine behind chat answers like "how was AAPL's last quarter" — it
+> makes sure the numbers come from the database, not the model's memory.
 
-> **For engineers:** Two services, one repo, one venv, one config.
-> `summary/` is a CLI; `question/` is a FastAPI app. They share
-> `config.py`, `shared/` (LLM client, DB access, formatters), and
-> `audit/` (logging). Both are also consumers of the top-level
-> `skills/` framework (see [Skills integration](#skills-integration)
-> below).
+> **For engineers:** two services, one repo, one venv, one config. `summary/` is
+> a CLI, `question/` is a FastAPI app. They share `config.py`, `shared/` (LLM
+> client, DB access, formatters) and `audit/`.
 
 ## Architecture
 
 ```
-                Supabase (documents, earnings, price_snapshot, summary_cache)
-                                  ▲          ▲
-                                  │          │
-       ┌──────────────────────────┘          └──────────────────────────┐
-       │                                                                │
-   summary/                                                        question/
-   ┌──────────────────────┐                                    ┌──────────────────────┐
-   │ fetcher → prompts →  │                                    │ FastAPI :8003        │
-   │ summarizer (Moonshot)│                                    │  /api/ask/stream     │
-   │ → cache → output/    │                                    │ router → orchestrator│
-   └──────────────────────┘                                    │   ├─ retriever (RAG) │
-                                                               │   ├─ live_fetcher    │
-                                                               │   ├─ kimi_structured │
-                                                               │   └─ templates/      │
-                                                               └──────────────────────┘
+        Supabase (documents, earnings, price_snapshot, summary_cache)
+                          ▲          ▲
+       ┌──────────────────┘          └──────────────────┐
+   summary/                                        question/
+   ┌──────────────────────┐                  ┌──────────────────────┐
+   │ fetcher → prompts →  │                  │ FastAPI :8003        │
+   │ summarizer (Moonshot)│                  │  /api/ask/stream     │
+   │ → cache → output/    │                  │ router → orchestrator│
+   └──────────────────────┘                  │   ├─ retriever (RAG) │
+                                             │   ├─ live_fetcher    │
+                                             │   ├─ kimi_structured │
+                                             │   └─ templates/      │
+                                             └──────────────────────┘
 ```
 
 ## Layout
 
 ```
 Summarization/
-├── config.py                    single source of truth for env vars (both services)
-├── requirements.txt
-├── Dockerfile.summary           image for the CLI / scheduled job
-├── Dockerfile.question          image for the FastAPI service
-│
-├── summary/                     ── offline report service ──
-│   ├── run.py                   CLI entry point (python -m summary.run)
-│   ├── fetcher.py               assemble TickerContext from Supabase
-│   ├── prompts.py               SYSTEM_PROMPT, build_user_prompt, PROMPT_VERSION
-│   ├── summarizer.py            Moonshot call wrapper
-│   ├── cache.py                 summary_cache table integration (input_hash)
-│   └── cleanup.py               retention sweep for old reports
-│
-├── question/                    ── online Q&A service ──
-│   ├── main.py                  FastAPI app (port 8003)
-│   ├── orchestrator.py          per-request flow
-│   ├── router.py                intent classification (rule + LLM)
-│   ├── retriever.py             pgvector search w/ recency reranking
-│   ├── live_fetcher.py          real-time price / quote fallback
-│   ├── kimi_structured.py       JSON-schema-constrained LLM calls
-│   ├── tier2_cache.py           in-process LRU for hot tickers
-│   ├── generator.py             free-form answer path (when no structured intent fits)
-│   ├── schemas/                 per-intent JSON Schema + Jinja2 templates
-│   │   ├── earnings_analysis.py
-│   │   ├── comparison.py
-│   │   └── price_query.py
-│   └── templates/               sandboxed Jinja2 engine + filters/functions
-│       ├── engine.py            SandboxedEnvironment, blocks disabled
-│       ├── filters.py           money / pct / compact formatters
-│       ├── functions.py         YoY / QoQ / FY aggregations (backend-computed)
-│       └── renderer.py          template entry point + RenderError handling
-│
-├── shared/                      cross-service helpers
-│   ├── db.py                    Supabase / pgvector access
-│   ├── llm.py                   Moonshot client + model tier selection + retry
-│   ├── http.py                  outbound HTTP helpers
-│   └── formatters.py            text formatters for context building
-│
-├── audit/                       structured logging to Supabase
-├── scripts/                     SQL / setup / dev tools (incl. validate_supabase.py)
-├── output/                      generated reports {TICKER}_{YYYY-MM-DD}.md (gitignored)
-├── tests/                       unit + integration tests for both services
-└── test-script/                 ad-hoc scripts (vector probes, etc.)
+├── config.py                  single source of truth for env vars
+├── summary/                   ── offline report service ──
+│   ├── run.py                 CLI entry (python -m summary.run)
+│   ├── fetcher.py             assemble TickerContext from Supabase
+│   ├── prompts.py             SYSTEM_PROMPT, build_user_prompt, PROMPT_VERSION
+│   ├── summarizer.py          Moonshot call wrapper
+│   ├── cache.py               summary_cache integration (input_hash)
+│   └── cleanup.py             retention sweep
+├── question/                  ── online Q&A service ──
+│   ├── main.py                FastAPI app (:8003)
+│   ├── orchestrator.py        per-request flow
+│   ├── router.py              L1 keyword → L2 Kimi intent classification
+│   ├── retriever.py           pgvector search + recency rerank + query expansion
+│   ├── live_fetcher.py        real-time quote fallback
+│   ├── kimi_structured.py     JSON-schema-constrained LLM calls
+│   ├── tier2_cache.py         in-process LRU for untracked tickers
+│   ├── generator.py           free-form answer path
+│   ├── schemas/               per-intent JSON Schema + templates
+│   └── templates/             sandboxed Jinja2 engine, filters, functions
+├── shared/                    db.py, llm.py, http.py, formatters.py
+├── audit/                     structured logging to Supabase
+├── scripts/                   SQL + dev tools
+└── output/                    {TICKER}_{YYYY-MM-DD}.md (gitignored)
 ```
-
-## Prerequisites
-
-- Python 3.11+
-- Supabase project with the schema in `data-pipeline/pipeline/schema.sql`
-  applied, and `pgvector` enabled.
-- Moonshot API key from [platform.moonshot.cn](https://platform.moonshot.cn).
-- A reachable embedding-service (port 8002) — `question/` calls it to
-  encode user queries before vector search.
 
 ## Setup
 
+Handled by `./dev.sh setup question` from QuantAgent. Manually:
+
 ```bash
-cd Summarization
-python -m venv venv && source venv/bin/activate
+python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env       # then fill in credentials
+cp .env.example .env        # then fill in credentials
 ```
 
-## summary — CLI usage
+Prerequisites: Python 3.11+, a Supabase project with
+`../data-pipeline/pipeline/schema.sql` applied and `pgvector` enabled, a
+Moonshot API key, and a reachable embedding-service on :8002.
+
+## summary — CLI
 
 ```bash
-# Single ticker
 python -m summary.run --ticker AAPL
-
-# Multiple tickers (comma-separated)
 python -m summary.run --ticker AAPL,MSFT,NVDA
-
-# All active tickers from Supabase (the production cron path)
-python -m summary.run --all
-
-# Fetch + assemble context but skip the LLM call (no cost, for sanity checks)
-python -m summary.run --ticker AAPL --dry-run
-
-# List skills available via the skills framework
+python -m summary.run --all                    # every active ticker (the cron path)
+python -m summary.run --ticker AAPL --dry-run  # assemble context, skip the LLM
 python -m summary.run --list-skills
-
-# Invoke a skill explicitly
 python -m summary.run --skill generate_report --args ticker=AAPL
-python -m summary.run --skill compare_tickers \
-    --args '{"tickers":["AAPL","MSFT"]}'
+python -m summary.run --skill compare_tickers --args '{"tickers":["AAPL","MSFT"]}'
 ```
 
-Reports land under `output/{TICKER}_{YYYY-MM-DD}.md`. Cache lookups are
-keyed on `SHA256(sorted source doc ids + model + prompt_version)` — if
-nothing changed, no LLM call is made.
+Reports land in `output/{TICKER}_{DATE}.md`. The cache key is
+`SHA256(sorted source doc ids + model + prompt_version)` — unchanged inputs mean
+no LLM call.
 
-## question — running the service
+## question — service
 
 ```bash
-# Local dev (port 8003)
 uvicorn question.main:app --port 8003 --reload
 
-# Docker (Cloud Run-ready; honors $PORT, defaults to 8080)
 docker build -f Dockerfile.question -t qa-question .
 docker run -p 8003:8080 --env-file .env qa-question
 ```
 
-Endpoint: `POST /api/ask/stream` — SSE stream of tokens + structured
-events (sources, intents, etc.). Consumed by `ChatbotUI/backend/rag.py`.
+| Method | Path | Description |
+|---|---|---|
+| POST | `/api/ask/stream` | SSE stream of tokens + structured events (`status`, `sources`, `clarification`) |
+| GET | `/health` | Liveness |
 
-## Skills integration
+Consumed by `QuantAgent/backend/rag.py`.
 
-Both services are consumers of the top-level `skills/` framework
-(see [`../skills/README.md`](../skills/README.md)):
+## Data flow — summary
 
-- **`summary/run.py`** supports `--skill <name>` to route through the
-  framework instead of the legacy `--ticker` path. The legacy path is
-  preserved verbatim for backward compatibility.
-- **`question/`** does not currently call skills directly; it remains
-  the RAG/structured-intent service. Chat-side skill routing lives in
-  `ChatbotUI/backend/main.py`, which has its own router → skill →
-  fallback-to-RAG handoff.
+1. **Fetch** — `fetcher.fetch_context(ticker)` pulls documents, earnings rows
+   and price snapshots.
+2. **Format** — organised into a `TickerContext`. Over `MAX_CONTEXT_CHARS`, news
+   and filings truncate first; earnings and price stay intact.
+3. **Cache check** — `compute_input_hash` over source doc ids + model + prompt
+   version. Hit → reuse.
+4. **Prompt → generate → save** — Moonshot with retry, then `output/` and
+   `summary_cache`.
 
-The shipped skills (`generate_report`, `compare_tickers`) call back
-into this repo's `summary.fetcher` and `summary.summarizer` for data
-and LLM access, so behavior between "skill in chat" and "CLI report"
-stays in lockstep.
+## Data flow — question
+
+1. **Route** — `router.classify()` picks an intent (`EARNINGS_ANALYSIS`,
+   `COMPARISON`, `PRICE_QUERY`, `NEWS_SUMMARY`, …). L1 is keyword + regex and
+   free; L2 is a small Kimi call, used only when L1 misses or when the query
+   also warrants expansion.
+2. **Retrieve** — encode via embedding-service, pgvector search with
+   recency-aware reranking and optional multi-vector query expansion.
+3. **Structured generation** — for `EARNINGS_ANALYSIS` / `COMPARISON` /
+   `PRICE_QUERY`, build context deterministically from DB rows, ask Moonshot for
+   only the narrative slots (`json_object` mode), render through sandboxed
+   Jinja2. **Numbers are computed in `templates/functions.py`, never by the LLM.**
+4. **Free-form fallback** — other intents go through `generator.py`.
+5. **Stream** — tokens and structured events as SSE.
+
+`PRICE_QUERY` skips the LLM entirely and renders from DB + live quote.
 
 ## Configuration
 
-All env vars live in `config.py` (single source of truth). Required:
-
-| Variable | Description |
-|----------|-------------|
-| `SUPABASE_URL`, `SUPABASE_KEY` | Supabase credentials |
-| `MOONSHOT_API_KEY` | Moonshot API key (used by both services + skills) |
-| `EMBEDDING_SERVICE_URL` | URL of embedding-service (e.g. `http://localhost:8002`) |
-
-Common optional tunables (see `config.py` for the full list):
+Everything lives in `config.py`. Required: `SUPABASE_URL`, `SUPABASE_KEY`,
+`MOONSHOT_API_KEY`, `EMBEDDING_SERVICE_URL`.
 
 | Variable | Default | Purpose |
-|----------|---------|---------|
-| `MOONSHOT_MODEL` | `kimi-k2.5` | Report model (summary service) |
-| `MAX_CONTEXT_CHARS` | `380000` | Per-ticker context budget for reports |
+|---|---|---|
+| `MOONSHOT_MODEL` | `kimi-k2.5` | Report model |
+| `KIMI_MODEL_CLASSIFY` | `moonshot-v1-8k` | L2 router model |
+| `MAX_CONTEXT_CHARS` | `380000` | Per-ticker context budget |
 | `SEMANTIC_TOP_K` | `8` | Retriever top-K |
 | `SIMILARITY_THRESHOLD` | `0.3` | Cosine threshold |
-| `RECENCY_HALF_LIFE_DAYS` | `14` | Recency-rerank Gaussian half-life |
-| `TIER2_CACHE_MAX_SIZE` | `200` | LRU size for question-service hot data |
+| `RECENCY_HALF_LIFE_DAYS` | `14` | Recency-rerank half-life |
+| `EXPANSION_MAX_QUERIES` | `4` | Cap on expanded queries |
+| `TIER2_CACHE_MAX_SIZE` | `200` | LRU size for untracked tickers |
 
-## Data flow (summary service)
+## Skills integration
 
-1. **Fetch** — `fetcher.fetch_context(ticker)` queries Supabase for
-   documents (news, 10-K, 10-Q, earnings text), structured earnings
-   rows, and price snapshots.
-2. **Format** — Raw data is organized by type into a `TickerContext`.
-   If total context exceeds `MAX_CONTEXT_CHARS`, news and filings are
-   truncated first (earnings and price stay intact).
-3. **Cache check** — `compute_input_hash` over sorted source doc IDs +
-   model + prompt version. Cache hit → reuse stored report.
-4. **Prompt** — `prompts.SYSTEM_PROMPT` + `build_user_prompt(ctx)`.
-5. **Generate** — `summarizer.generate_summary` calls Moonshot with
-   retry on rate-limit / connection errors.
-6. **Save** — Report is written to `output/` and persisted to
-   `summary_cache` keyed on the input hash.
+`summary/run.py` supports `--skill <name>` to route through the shared
+[Skills](https://github.com/ZeroNoise2026/Skills) framework; the legacy
+`--ticker` path is preserved verbatim. It locates the package by probing
+`<workspace>/Skills` and falling back to the pip-installed distribution.
 
-## Data flow (question service)
+`question/` does not call skills — it stays the RAG / structured-intent service.
+Chat-side skill routing lives in `QuantAgent/backend/main.py`.
 
-Per request to `/api/ask/stream`:
+The shipped skills call back into this repo's `summary.fetcher` and
+`summary.summarizer`, so "skill in chat" and "CLI report" stay in lockstep.
 
-1. **Route** — `router.classify()` picks an Intent (`EARNINGS_ANALYSIS`,
-   `COMPARISON`, `PRICE_QUERY`, `NEWS_SUMMARY`, ...). Uses keyword rules
-   first, then an LLM fallback for ambiguous queries.
-2. **Retrieve** — For RAG paths: encode query via embedding-service,
-   vector-search Supabase with recency-aware reranking.
-3. **Structured generation (when applicable)** — For
-   `EARNINGS_ANALYSIS` / `COMPARISON` / `PRICE_QUERY`, build context
-   deterministically from DB rows, ask Moonshot for only the
-   narrative slots (`json_object` mode), then render the final Markdown
-   through the sandboxed Jinja2 templates. Numbers are computed in
-   `templates/functions.py` (YoY / QoQ / FY aggregations), not by the
-   LLM.
-4. **Free-form fallback** — For intents without a structured template,
-   `generator.py` produces a normal answer from retrieved docs.
-5. **Stream** — Tokens and structured events (`sources`, `intent`) are
-   emitted as SSE.
-
-## Database tables used
+## Database tables
 
 | Table | Used by | Purpose |
-|-------|---------|---------|
-| `documents` | both | News, SEC filings (10-K/10-Q), earnings text chunks with embeddings |
+|---|---|---|
+| `documents` | both | News, 10-K/10-Q, earnings chunks with embeddings |
 | `earnings` | both | Quarterly EPS, revenue, net income, guidance |
 | `price_snapshot` | both | Daily close, P/E, market cap |
-| `tracked_tickers` | summary | Active ticker list (used with `--all`) |
-| `summary_cache` | summary | Cached generated reports keyed on input_hash |
+| `tracked_tickers` | summary | Active ticker list (`--all`) |
+| `summary_cache` | summary | Cached reports by input_hash |
 | `audit_log` | both | Structured query/response logging |
+
+We never write to the first four — `data-pipeline` owns them.
 
 ## Testing
 
 ```bash
-# Run all tests
 pytest tests/ -v
-
-# Just the templates layer (fast)
-pytest tests/test_templates_phase1.py -v
-
-# Smoke test for vector retrieval (needs Supabase reachable)
-python scripts/test_retrieval.py
+pytest tests/test_templates_phase1.py -v   # fast, no services
+python scripts/test_retrieval.py           # needs Supabase + embedding-service
+python scripts/test_t4_router.py           # router only, pure in-memory
 ```
 
 ## Related services
 
 | Service | Why this repo cares |
-|---------|---------------------|
-| `embedding-service` (:8002) | Called by `question/` to encode user queries before pgvector search. |
-| `data-pipeline` | Populates the Supabase tables this repo reads from. We never write to those tables from here. |
-| `ChatbotUI/backend` | Calls `question/` via HTTP and embeds skill execution into its chat stream. |
-| `skills/` (top-level) | Hosts `generate_report` and `compare_tickers`, which reuse this repo's fetcher + summarizer. |
+|---|---|
+| `embedding-service` (:8002) | `question/` calls it to encode queries before pgvector search |
+| `data-pipeline` | Populates the tables we read. We never write to them. |
+| `QuantAgent/backend` | Calls `question/` over HTTP and embeds skill execution in its chat stream |
+| `Skills` | Hosts `generate_report` and `compare_tickers`, which reuse our fetcher + summarizer |
