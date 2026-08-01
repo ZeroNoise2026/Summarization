@@ -23,12 +23,23 @@ from summary.prompts import PROMPT_VERSION
 from summary.cache import compute_input_hash, get_cached, put_cached
 from shared.db import get_tracked_tickers
 
-# Make the top-level skills/ package importable from this CLI. Summarization
-# is run from inside its own dir (cwd = Summarization/), so its parent — the
-# repo root — needs to be on sys.path to find `skills`.
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
+# Make the shared `skills` package importable.
+#
+# The package lives at <project-root>/<clone>/skills/, where <clone> is
+# whatever `git clone .../Skills.git` produced — "Skills" by default, which
+# does NOT match `import skills` on a case-sensitive filesystem (Linux,
+# Docker, CI). So probe the candidate clone names instead of assuming one.
+#
+# If no candidate matches, the package was pip-installed instead (see
+# Skills/pyproject.toml) and the installed distribution is used — that is
+# how the container image gets it.
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+for _clone_name in ("Skills", "skills"):
+    _skills_repo = _PROJECT_ROOT / _clone_name
+    if (_skills_repo / "skills" / "__init__.py").is_file():
+        if str(_skills_repo) not in sys.path:
+            sys.path.insert(0, str(_skills_repo))
+        break
 
 logging.basicConfig(
     level=logging.INFO,

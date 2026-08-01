@@ -20,9 +20,13 @@ import json
 import time
 import asyncio
 import logging
+from pathlib import Path
 
-sys.path.insert(0, "/Users/fangjiali/Summarization")
-os.chdir("/Users/fangjiali/Summarization")
+# Resolve the Summarization repo root relative to this file (scripts/ sits
+# one level below it) so this works on any machine, not just the author's.
+_SUMMARIZATION_DIR = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(_SUMMARIZATION_DIR))
+os.chdir(_SUMMARIZATION_DIR)
 
 # Load .env before any imports that need it
 from dotenv import load_dotenv
@@ -35,7 +39,7 @@ from question.models import Intent, QueryMode
 from shared.db import get_documents_by_embedding, get_earnings, get_price_snapshots
 
 # ── Logging → both console + file ──
-log_path = "/Users/fangjiali/Summarization/scripts/test_retrieval.log"
+log_path = str(Path(__file__).resolve().parent / "test_retrieval.log")
 file_handler = logging.FileHandler(log_path, mode="w")
 console_handler = logging.StreamHandler()
 formatter = logging.Formatter("%(message)s")

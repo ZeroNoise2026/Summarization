@@ -8,8 +8,11 @@ Verbose mode: shows the full internal routing path for each query.
 import sys
 import re
 import time
+from pathlib import Path
 
-sys.path.insert(0, "/Users/fangjiali/Summarization")
+# Resolve the Summarization repo root relative to this file (scripts/ sits
+# one level below it) so this works on any machine, not just the author's.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from question.router import router, COMPANY_ALIASES, INTENT_KEYWORDS, INTENT_PRIORITY, COMMON_WORDS, INTENT_TO_MODE
 from question.models import Intent, QueryMode
